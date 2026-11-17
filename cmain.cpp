@@ -11,7 +11,6 @@
 #include <SDL3/SDL.h>
 #include <SDL3_image/SDL_image.h>
 
-
 struct EntityData {
     int kind;
     int active;
@@ -33,11 +32,7 @@ struct EntityData {
     float display_alpha;
 };
 
-EntityData* entities;
-
-// --------------------------------------------------
-// Export macro for Python / ctypes
-// --------------------------------------------------
+EntityData* entities = nullptr;
 
 #define API extern "C" __declspec(dllexport)
 
@@ -53,7 +48,7 @@ static SDL_Renderer* RENderer = nullptr;
 static bool running = true;
 
 // Keys freshly pressed during the current frame
-static std::unordered_set<SDL_Keycode> pressed_this_frame;
+static std::unordered_set<SDL_Scancode> pressed_this_frame;
 
 // --------------------------------------------------
 // Renderer / Window
@@ -129,12 +124,13 @@ static int RenderInternal(SDL_Renderer* renderer) {
     pressed_this_frame.clear();
 
     while (SDL_PollEvent(&ev)) {
+
         if (ev.type == SDL_EVENT_QUIT) {
             running = false;
         }
 
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat) {
-            pressed_this_frame.insert(ev.key.key);
+            pressed_this_frame.insert(ev.key.scancode);
         }
     }
 
@@ -204,7 +200,8 @@ static void store_texture(int name, SDL_Texture* texture) {
             SDL_DestroyTexture(it->second);
 
         it->second = texture;
-    } else {
+    }
+    else {
         textures.emplace(key, texture);
     }
 }
@@ -217,11 +214,12 @@ static int LoadImageInternal(
     SDL_Renderer* renderer,
     const char* path
 ) {
-    int name = textures.size();
     if (!renderer || !path) {
         SDL_Log("LoadImage: renderer or path is null.");
-        return false;
+        return -1;
     }
+
+    int name = static_cast<int>(textures.size());
 
     SDL_Texture* texture = IMG_LoadTexture(renderer, path);
 
@@ -251,7 +249,11 @@ static int loadtexture(
     Uint8 b,
     Uint8 a
 ) {
-    int name = textures.size();
+    if (!renderer)
+        return -1;
+
+    int name = static_cast<int>(textures.size());
+
     SDL_Texture* texture =
         create_color_texture(renderer, r, g, b, a);
 
@@ -281,10 +283,8 @@ static bool DrawObj(
 
     auto it = textures.find(std::to_string(texture_name));
 
-    if (it == textures.end() || !it->second) {
-        SDL_Log("Texture ID %d not found", texture_name);
+    if (it == textures.end() || !it->second)
         return false;
-    }
 
     SDL_FRect dst = { x, y, w, h };
 
@@ -336,6 +336,7 @@ static void Pr(
     std::unordered_map<int32_t, TextureBatch> batches;
 
     for (int c = 0; c < chunk_count; ++c) {
+
         const int chunk_x = chunk_coords[c * 2];
         const int chunk_y = chunk_coords[c * 2 + 1];
 
@@ -364,6 +365,7 @@ static void Pr(
         const int chunk_base = c * blocks_per_chunk;
 
         for (int i = 0; i < blocks_per_chunk; ++i) {
+
             const int32_t block_id = blocks[chunk_base + i];
 
             if (block_id == 0)
@@ -430,6 +432,7 @@ static void Pr(
     }
 
     for (auto& entry : batches) {
+
         const int32_t block_id = entry.first;
         auto& batch = entry.second;
 
@@ -455,13 +458,8 @@ static void Pr(
 
 // --------------------------------------------------
 // Key handling
-//
-// hold_scancodes: SDL_Scancode values
-// press_keycodes: SDL_Keycode values
-//
-// Example output: H:W+D;P:Space
 // H = held keys
-// P = keys newly pressed this frame
+// P = newly pressed keys
 // --------------------------------------------------
 
 static void append_text(
@@ -480,7 +478,7 @@ static void append_text(
 static void KeycontInternal(
     const int* hold_scancodes,
     int hold_count,
-    const int* press_keycodes,
+    const int* press_scancodes,
     int press_count,
     char* output,
     int output_capacity
@@ -491,13 +489,18 @@ static void KeycontInternal(
     output[0] = '\0';
 
     int keyboard_count = 0;
-    const bool* keyboard = SDL_GetKeyboardState(&keyboard_count);
+
+    const bool* keyboard =
+        SDL_GetKeyboardState(&keyboard_count);
 
     std::string held;
     std::string pressed;
 
+    // Held keys
     if (keyboard && hold_scancodes && hold_count > 0) {
+
         for (int i = 0; i < hold_count; ++i) {
+
             const int scancode = hold_scancodes[i];
 
             if (scancode < 0 || scancode >= keyboard_count)
@@ -506,8 +509,6 @@ static void KeycontInternal(
             if (!keyboard[scancode])
                 continue;
 
-            // Use the scancode name so the held-key label
-            // stays stable and does not depend on modifiers.
             append_text(
                 held,
                 SDL_GetScancodeName(
@@ -517,17 +518,28 @@ static void KeycontInternal(
         }
     }
 
-    if (press_keycodes && press_count > 0) {
+    // Newly pressed keys
+    if (press_scancodes && press_count > 0) {
+
         for (int i = 0; i < press_count; ++i) {
-            const SDL_Keycode key =
-                static_cast<SDL_Keycode>(press_keycodes[i]);
+
+            const int value = press_scancodes[i];
+
+            if (value < 0 || value >= SDL_SCANCODE_COUNT)
+                continue;
+
+            const SDL_Scancode key =
+                static_cast<SDL_Scancode>(value);
 
             if (pressed_this_frame.find(key) ==
                 pressed_this_frame.end()) {
                 continue;
             }
 
-            append_text(pressed, SDL_GetKeyName(key));
+            append_text(
+                pressed,
+                SDL_GetScancodeName(key)
+            );
         }
     }
 
@@ -537,6 +549,7 @@ static void KeycontInternal(
         result = "H:" + held;
 
     if (!pressed.empty()) {
+
         if (!result.empty())
             result += ';';
 
@@ -553,17 +566,14 @@ static void KeycontInternal(
 }
 
 // --------------------------------------------------
-// Present implementation
+// Present
 // --------------------------------------------------
 
 static void present_internal() {
     if (!RENderer)
         return;
 
-    if (!SDL_RenderPresent(RENderer)) {
-        SDL_Log("SDL_RenderPresent failed: %s", SDL_GetError());
-    }
-
+    SDL_RenderPresent(RENderer);
     SDL_Delay(16);
 }
 
@@ -572,6 +582,7 @@ static void present_internal() {
 // --------------------------------------------------
 
 static int quit_internal() {
+
     for (auto& entry : textures) {
         if (entry.second)
             SDL_DestroyTexture(entry.second);
@@ -589,13 +600,16 @@ static int quit_internal() {
         WINdow = nullptr;
     }
 
+    delete[] entities;
+    entities = nullptr;
+
     SDL_Quit();
+
     return 0;
 }
 
 // --------------------------------------------------
-// Exported C API for Python / ctypes
-// All exported names have C linkage.
+// Exported C API
 // --------------------------------------------------
 
 API int Init() {
@@ -697,7 +711,7 @@ API int Quit() {
 API void keycont(
     const int* hold_scancodes,
     int hold_count,
-    const int* press_keycodes,
+    const int* press_scancodes,
     int press_count,
     char* output,
     int output_capacity
@@ -705,10 +719,21 @@ API void keycont(
     KeycontInternal(
         hold_scancodes,
         hold_count,
-        press_keycodes,
+        press_scancodes,
         press_count,
         output,
         output_capacity
     );
 }
-API EntityData* CreateEntities(int count){return new EntityData[count];}
+
+API EntityData* CreateEntities(int count) {
+
+    if (count <= 0)
+        return nullptr;
+
+    delete[] entities;
+
+    entities = new EntityData[count]();
+
+    return entities;
+}

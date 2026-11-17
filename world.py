@@ -51,29 +51,38 @@ class World:
 
 
 
+    
     def update(self):
+        # بارگذاری پس‌زمینه Chunkها
         self.blockManager.update_background_loading(self.display)
 
-        for id, npc in self.npcs.items():
-            data = npc[0]
-            contoroler = npc[1]
+        # دریافت ورودی و به‌روزرسانی تمام NPCها
+        for npc_data in self.npcs.values():
+            npc = npc_data[0]
+            controller = npc_data[1]
 
-            api = contoroler.getAPI()
-            data.getAPI(api)
-            print(1)
+            api = controller.getAPI()
+            npc.getAPI(api)
+            
 
-        if self.player:
+        # حرکت دوربین بر اساس حرکت بازیکن
+        if self.player is not None:
             self.blockManager.move(
                 -self.player.last_dx,
                 self.player.last_dy
             )
 
+        # به‌روزرسانی دوره‌ای NPCها و HUD
         self.npc_update_counter += 1
 
         if self.npc_update_counter >= self.npc_update_every:
             self.npc_update_counter = 0
+
             self.updateNPC()
-            self.updateHUD()
+
+            if self.HUD is not None and self.player is not None:
+                self.updateHUD()
+
 
     def render_all_chunks(self, camera_x, camera_y):
         chunks = [

@@ -4,7 +4,7 @@ from worldchunk import Chunk
 from conster import *
 from texture import *
 from cppfuncs import *
-
+import time
 
 class BlocksWorld:
 
@@ -804,58 +804,39 @@ class BlocksWorld:
     # Background Loading
     # ==================================================
 
-    def update_background_loading(
-        self,
-        display
-    ):
+    
+    def update_background_loading(self, display=None):
 
-        if (
-            pyg.time.get_ticks()
-            -
-            self.last_chunk_load_time
-            > 50
-        ):
+        current_time = time.monotonic()
 
-            self.last_chunk_load_time = (
-                pyg.time.get_ticks()
-            )
+        # هر 50 میلی‌ثانیه یک چانک بررسی و در صورت نیاز بارگذاری شود
+        if current_time - self.last_chunk_load_time < 0.05:
+            return
 
-            total = (
-                self.num_chunks_x
-                *
-                self.num_chunks_y
-            )
+        self.last_chunk_load_time = current_time
 
-            if (
-                self.background_loader_index
-                <
-                total
-            ):
+        total = self.num_chunks_x * self.num_chunks_y
 
-                cx = (
-                    self.background_loader_index
-                    %
-                    self.num_chunks_x
-                )
+        if self.background_loader_index >= total:
+            return
 
-                cy = (
-                    self.background_loader_index
-                    //
-                    self.num_chunks_x
-                )
+        cx = (
+            self.background_loader_index
+            % self.num_chunks_x
+        )
 
-                key = (
-                    cx,
-                    cy
-                )
+        cy = (
+            self.background_loader_index
+            // self.num_chunks_x
+        )
 
-                if key not in self.Chunks:
+        key = (cx, cy)
 
-                    self.load_chunk(
-                        key
-                    )
+        if key not in self.Chunks:
+            self.load_chunk(key)
 
-                self.background_loader_index += 1
+        self.background_loader_index += 1
+
 
     # ==================================================
     # Camera Move

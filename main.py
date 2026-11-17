@@ -35,7 +35,7 @@ NPC.activate(entities,EntityPointer,MAX_ENTITIES)
 
 
 from world import *
-
+import conster
 from texture import *
 # from contoroler import *
 # from hud import *
@@ -50,40 +50,32 @@ playerContoroler = Contoroler_Key(screen)
 seed = random.randint(0, 999999999)
 print("seed:", seed)
 
+# 1. راه‌اندازی SDL
+Init()
+
+# 2. دریافت ابعاد واقعی پنجره
+width, height = getWinSize()
+
+# 3. ذخیره ابعاد
+conster.WIDTH = width
+conster.HEIGHT = height
+
+# 4. بارگذاری تکسچرها
+Texture.init()
+
+# 5. ساخت جهان و پلیر
+
+
 world = World(seed)
-
-
 
 player = world.newPlayer(
     50,
     50,
-    WIDTH / 2-50/2,
-    HEIGHT / 2-50/2,
+    WIDTH / 2 - 25,
+    HEIGHT / 2 - 25,
     Texture.npc1,
     playerContoroler
 )
-
-
-# for _ in range( 100):
-
-#     world.newNPC(
-#         50,
-#         50,
-#         WIDTH / 2 + 200,
-#         HEIGHT / 2,
-#         COLORS["BLUE"],
-#         Contoroler_Key(
-#             pyg.K_i,
-#             pyg.K_k,
-#             pyg.K_j,
-#             pyg.K_l,
-#             pyg.K_u
-#         )
-#     )
-
-# world.getHUD(HUD(screen, player.getStatus(world.blockManager)))
-Init()
-Texture.init()
 print("game started")
 
 
@@ -95,7 +87,7 @@ while running == 1:
 
     
 
-    # world.update()
+    world.update()
 
     # screen.fill((0, 0, 0))
 

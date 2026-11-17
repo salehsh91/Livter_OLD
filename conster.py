@@ -7,8 +7,8 @@ Render = True
 
 target = 720
 
-WIDTH = 0
-HEIGHT = 0
+WIDTH = 100
+HEIGHT = 100
 
 
 # def size(num ,type = "x"):
@@ -26,8 +26,8 @@ H_WORLD = 100
 BLOCK_SIZE = 32
 
 
-NPC_SPEED = 1
-CAMERA_SPEED = 1
+NPC_SPEED = 10
+CAMERA_SPEED = 10
 
 camdirline = 50
 
