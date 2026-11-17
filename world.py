@@ -60,6 +60,7 @@ class World:
 
             api = contoroler.getAPI()
             data.getAPI(api)
+            print(1)
 
         if self.player:
             self.blockManager.move(
@@ -163,7 +164,7 @@ class World:
             player,
 
             # move
-            player
+            True
         )
 
         npc.addinvertory(inventory)
@@ -223,7 +224,8 @@ class World:
         # )
 
         if Render():
-            self.render_all_chunks(0, 0)
+            self.render_all_chunks(self.blockManager.bx,
+    self.blockManager.by)
             present()
             return True
 

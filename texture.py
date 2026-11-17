@@ -1,5 +1,5 @@
 import os
-
+from cppfuncs import *
 from conster import *
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -7,66 +7,28 @@ ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 
 
 
-# def load_texture(name, fallback, alpha=False):
-#     try:
-#         image = pyg.image.load(
-#             os.path.join(ASSETS_DIR, name)
-#         )
-#         return image.convert_alpha() if alpha else image.convert()
-#     except:
-#         surface = pyg.Surface(
-#             (BLOCK_SIZE, BLOCK_SIZE),
-#             pyg.SRCALPHA if alpha else 0
-#         )
-#         surface.fill(fallback)
-#         return surface
 
 
-class Texture:
-    pass
 
 class Texturep:
-    def __init__(self):
-        
-        grass = pyg.transform.scale(
-        load_texture("grass2.png", (34, 139, 34)),
-        (BLOCK_SIZE, BLOCK_SIZE)
-        )
+    pass
 
-        stone = pyg.transform.scale(
-        load_texture("stone2.png", (128, 128, 128)),
-        (BLOCK_SIZE, BLOCK_SIZE)
-        )
+class Texture:
+    grass = water = stone = sand = plank = health = hungry = oak = leaves = -2
+    npc1 = -2
 
-        water = pyg.transform.scale(
-        load_texture("water2.png", (30, 144, 255)),
-        (BLOCK_SIZE, BLOCK_SIZE)
-        )
+    
+    
+    def init():
+        renderer = GetRenderer()
+        grass = LoadImageTexture(renderer, b"assets/grass.png")
+        water = LoadImageTexture(renderer, b"assets/water.png")
+        stone = LoadImageTexture(renderer, b"assets/stone.png")
+        sand = LoadImageTexture(renderer, b"assets/sand.png")
+        plank = LoadImageTexture(renderer, b"assets/plank.png")
+        health = LoadImageTexture(renderer, b"assets/health.png")
+        hungry = LoadImageTexture(renderer, b"assets/hungry.png")
+        oak = LoadImageTexture(renderer, b"assets/oak.png")
+        leaves = LoadImageTexture(renderer, b"assets/leaves.png")
 
-        sand = pyg.transform.scale(
-        load_texture("sand2.png", (244, 164, 96)),
-        (BLOCK_SIZE, BLOCK_SIZE)
-        )
-
-        plank = pyg.transform.scale(
-        load_texture("plank.png", (244, 164, 96)),
-        (BLOCK_SIZE, BLOCK_SIZE)
-        )
-
-        health = pyg.transform.scale(
-            load_texture("health.png", (244, 0, 0),True),
-            (10,10)
-        )
-        hungry = pyg.transform.scale(
-                load_texture("hungry.png", (255, 160, 22),True),
-                (10,10)
-            )
-
-        oak = pyg.transform.scale(
-            load_texture("oak.png", (244, 164, 96)),
-            (BLOCK_SIZE, BLOCK_SIZE)
-        )
-
-        leaves = pyg.transform.scale(
-            load_texture("leaves.png", (0, 255, 0),True),
-            (BLOCK_SIZE, BLOCK_SIZE)     )
+        npc1 = LoadTexture(renderer,255,0,0,255)

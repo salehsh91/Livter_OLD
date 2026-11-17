@@ -74,7 +74,15 @@ class Chunk:
                     global_y
                 )
 
-                block = 1
+                
+                if _ == "grass":
+                    block = 1
+                elif _ == "water":
+                    block = 2
+                elif _ == "stone":
+                    block = 3
+                else:
+                    block = 0
                 # Block.getblock_status(
                 #     texture
                 # )

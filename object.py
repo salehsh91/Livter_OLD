@@ -1,16 +1,56 @@
+import ctypes
 
 from conster import *
 # from blockitem import Block
 
+
+class ObjData(ctypes.Structure):
+    _fields_ = [
+        ("world_x", ctypes.c_float),
+        ("world_y", ctypes.c_float),
+        ("world_z", ctypes.c_int),
+        ("texture", ctypes.c_int),
+        ("type", ctypes.c_int),
+        ("width", ctypes.c_float),
+        ("height", ctypes.c_float),
+        ("length", ctypes.c_float),
+        ("base_x", ctypes.c_float),
+        ("base_y", ctypes.c_float),
+        ("display_alpha", ctypes.c_float),
+    ]
+
+
+MAX_OBJECTS = 10000
+ObjArray = ObjData * MAX_OBJECTS
+
+
 class obj:
+    # Python lookup/storage for gameplay.
     objs = {}
-    def __init__(self,x,y,z,objwidth=BLOCK_SIZE,objheight=BLOCK_SIZE,name="plank",offset_x=0,offset_y=0):
 
-        
-                
+    # One contiguous Python/C++ compatible render-data array.
+    object_array = ObjArray()
+    object_count = 0
 
-        self.world_x = offset_x + ((x-offset_x)//BLOCK_SIZE)*BLOCK_SIZE
-        self.world_y = offset_y + ((y-offset_y)//BLOCK_SIZE)*BLOCK_SIZE
+    def __init__(
+        self,
+        x,
+        y,
+        z,
+        objwidth=BLOCK_SIZE,
+        objheight=BLOCK_SIZE,
+        name="plank",
+        offset_x=0,
+        offset_y=0
+    ):
+        if obj.object_count >= MAX_OBJECTS:
+            raise RuntimeError("MAX_OBJECTS reached")
+
+        self.slot = obj.object_count
+        obj.object_count += 1
+
+        self.world_x = offset_x + ((x - offset_x) // BLOCK_SIZE) * BLOCK_SIZE
+        self.world_y = offset_y + ((y - offset_y) // BLOCK_SIZE) * BLOCK_SIZE
         self.world_z = z
 
         self.width = objwidth
@@ -20,65 +60,161 @@ class obj:
         self.base_x = offset_x
         self.base_y = offset_y
 
-        block = Block.getblock_status(name = name)
+        block = Block.getblock_status(name=name)
         self.texture = block.texture
         self.type = block.type
         self.name = block.name
 
-
         self.display_alpha = 255.0
-        
 
-        
-        
+        # Data required by the C++ renderer.
+        self._update_render_data()
 
+    def _update_render_data(self):
+        data = obj.object_array[self.slot]
+
+        data.world_x = self.world_x
+        data.world_y = self.world_y
+        data.world_z = self.world_z
+
+        # texture must be a numeric texture ID understood by C++.
+        data.texture = int(self.texture)
+
+        data.type = int(self.type)
+        data.width = self.width
+        data.height = self.height
+        data.length = self.length
+
+        data.base_x = self.base_x
+        data.base_y = self.base_y
+        data.display_alpha = self.display_alpha
+
+    @classmethod
+    def get_cpp_buffer(cls):
+        return cls.object_array
+
+    @classmethod
+    def get_cpp_pointer(cls):
+        return ctypes.cast(
+            cls.object_array,
+            ctypes.POINTER(ObjData)
+        )
+
+    @classmethod
+    def get_cpp_count(cls):
+        return cls.object_count
+
+    @classmethod
+    def _clear_render_data(cls, slot):
+        data = cls.object_array[slot]
+
+        data.world_x = 0
+        data.world_y = 0
+        data.world_z = -1
+        data.texture = 0
+        data.type = 0
+        data.width = 0
+        data.height = 0
+        data.length = 0
+        data.base_x = 0
+        data.base_y = 0
+        data.display_alpha = 0
 
     def create(self):
-        for id, obj in self.objs.items():
-            if self.world_x == obj.world_x and self.world_y == obj.world_y and self.world_z == obj.world_z:
+        for object_ in self.objs.values():
+            if (
+                self.world_x == object_.world_x
+                and self.world_y == object_.world_y
+                and self.world_z == object_.world_z
+            ):
                 return False
 
-        self.id = (self.world_x,self.world_y,self.world_z)
+        self.id = (self.world_x, self.world_y, self.world_z)
         self.objs[self.id] = self
 
-        
+        self._update_render_data()
+
         return True
 
     @classmethod
-    def remove(cls, x, y, z, objwidth=BLOCK_SIZE, objheight=BLOCK_SIZE, name="plank", offset_x=0, offset_y=0, autogrand=False):
+    def remove(
+        cls,
+        x,
+        y,
+        z,
+        objwidth=BLOCK_SIZE,
+        objheight=BLOCK_SIZE,
+        name="plank",
+        offset_x=0,
+        offset_y=0,
+        autogrand=False
+    ):
+        A_world_x = (
+            offset_x
+            + ((x - offset_x) // BLOCK_SIZE) * BLOCK_SIZE
+        )
 
-        A_world_x = offset_x + ((x - offset_x) // BLOCK_SIZE) * BLOCK_SIZE
-        A_world_y = offset_y + ((y - offset_y) // BLOCK_SIZE) * BLOCK_SIZE
+        A_world_y = (
+            offset_y
+            + ((y - offset_y) // BLOCK_SIZE) * BLOCK_SIZE
+        )
 
         if autogrand:
-            # پیدا کردن بالاترین بلاک (بیشترین world_z) در همین ستون x,y
+            # پیدا کردن بالاترین بلاک در همین ستون x,y
             target_id = None
             target_z = None
 
-            for id_, o in cls.objs.items():
-                if o.world_x == A_world_x and o.world_y == A_world_y:
-                    if target_z is None or o.world_z > target_z:
-                        target_z = o.world_z
+            for id_, object_ in cls.objs.items():
+                if (
+                    object_.world_x == A_world_x
+                    and object_.world_y == A_world_y
+                ):
+                    if (
+                        target_z is None
+                        or object_.world_z > target_z
+                    ):
+                        target_z = object_.world_z
                         target_id = id_
 
             if target_id is None:
                 return (False, None)
 
-            name_removed = cls.objs[target_id].name
+            removed = cls.objs[target_id]
+            name_removed = removed.name
+
             del cls.objs[target_id]
+            cls._clear_render_data(removed.slot)
+
             return (True, name_removed)
 
         # حالت عادی: حذف بلاک دقیقاً در z مشخص‌شده
-        for id_, o in cls.objs.items():
-            if A_world_x == o.world_x and A_world_y == o.world_y and o.world_z == z:
-                name_removed = o.name
+        for id_, object_ in list(cls.objs.items()):
+            if (
+                A_world_x == object_.world_x
+                and A_world_y == object_.world_y
+                and object_.world_z == z
+            ):
+                removed = object_
+                name_removed = removed.name
+
                 del cls.objs[id_]
+                cls._clear_render_data(removed.slot)
+
                 return (True, name_removed)
 
         return (False, None)
 
     @classmethod
-    def zblock(cls,x,y,playerz,playerl,offset_x,offset_y,autoGround):
+    def zblock(
+        cls,
+        x,
+        y,
+        playerz,
+        playerl,
+        offset_x,
+        offset_y,
+        autoGround
+    ):
         world_x = (
             offset_x
             + ((x - offset_x) // BLOCK_SIZE) * BLOCK_SIZE
@@ -90,15 +226,12 @@ class obj:
         )
 
         if autoGround:
-
             z = 1
 
             while True:
-
                 occupied = False
 
                 for object_ in cls.objs.values():
-
                     if (
                         object_.world_x == world_x
                         and object_.world_y == world_y
@@ -114,91 +247,37 @@ class obj:
 
         return max(1, playerz - 1)
 
-    
-    
-
-    def draw(self, display, bx, by):
-        # Shadow
-        z_height = max(0, self.world_z - 1)
-
-        shadow_width = max(
-            4,
-            int(self.width * (1 - z_height * 0.08))
-        )
-
-        shadow_height = max(
-            3,
-            int(self.height * 0.25 * (1 - z_height * 0.05))
-        )
-
-        shadow_alpha = max(
-            25,
-            int(80 - z_height * 8)
-        )
-
-        shadow = pyg.Surface(
-            (shadow_width, shadow_height),
-            pyg.SRCALPHA
-        )
-
-        pyg.draw.ellipse(
-            shadow,
-            (0, 0, 0, shadow_alpha),
-            shadow.get_rect()
-        )
-
-        shadow_x = (
-            self.world_x
-            + bx
-            + (self.width - shadow_width) / 2
-        )
-
-        shadow_y = (
-            self.world_y
-            + by
-            + self.height
-            - shadow_height / 2
-            + z_height * 4
-        )
-
-        display.blit(
-            shadow,
-            (shadow_x, shadow_y)
-        )
-
-        # Object
-        draw_y = (
-            self.world_y
-            + by
-            
-        )
-
-        display.blit(
-            self.texture,
-            (
-                self.world_x + bx,
-                draw_y
-            )
-        )
     @classmethod
-    def drawObjects(cls,display,bx,by):
-        for id ,obj in cls.objs.items():
-            obj.draw(display,bx,by)
+    def getObj(
+        cls,
+        world_x,
+        world_y,
+        world_z,
+        offset_x=0,
+        offset_y=0
+    ):
+        x = (
+            offset_x
+            + ((world_x - offset_x) // BLOCK_SIZE) * BLOCK_SIZE
+        )
 
+        y = (
+            offset_y
+            + ((world_y - offset_y) // BLOCK_SIZE) * BLOCK_SIZE
+        )
+
+        return cls.objs.get((x, y, world_z))
 
     @classmethod
-    def getObj(cls,world_x,world_y,world_z,offset_x=0,offset_y=0):
-        x = offset_x + ((world_x-offset_x)//BLOCK_SIZE)*BLOCK_SIZE
-        y = offset_y + ((world_y-offset_y)//BLOCK_SIZE)*BLOCK_SIZE
-        return cls.objs.get((x,y,world_z))
-
-
-            
-
-
-    @classmethod
-    def getObj3x3x3(cls, world_x, world_y, world_z, offset_x=0, offset_y=0):
-        objs = []
+    def getObj3x3x3(
+        cls,
+        world_x,
+        world_y,
+        world_z,
+        offset_x=0,
+        offset_y=0
+    ):
+        objects = []
 
         for xX in range(-1, 2):
             x = world_x + (xX * BLOCK_SIZE)
@@ -221,10 +300,17 @@ class obj:
                         startx = object_.world_x
                         starty = object_.world_y
 
-                        lastx = object_.world_x + object_.width
-                        lasty = object_.world_y + object_.height
+                        lastx = (
+                            object_.world_x
+                            + object_.width
+                        )
 
-                        objs.append([
+                        lasty = (
+                            object_.world_y
+                            + object_.height
+                        )
+
+                        objects.append([
                             startx,
                             starty,
                             lastx,
@@ -233,134 +319,45 @@ class obj:
                             object_.length
                         ])
 
-        return objs
-                
+        return objects
 
     @classmethod
-    def getObjs(cls,world,player):
-        objs = {}
-        wb = int(WIDTH//BLOCK_SIZE)+2
-        hb = int(HEIGHT//BLOCK_SIZE)+1
+    def getObjs(cls, world, player):
+        objects = {}
+
+        wb = int(WIDTH // BLOCK_SIZE) + 2
+        hb = int(HEIGHT // BLOCK_SIZE) + 1
+
         base_x = world.base_x
         base_y = world.base_y
 
-        
+        for ix in range(0, wb):
+            x = (
+                ix * BLOCK_SIZE
+                + int(player.world_x - WIDTH / 2)
+            )
 
+            x = (
+                base_x
+                + ((x - base_x) // BLOCK_SIZE) * BLOCK_SIZE
+            )
 
-        
-        for ix in range(0,wb):
-            x = ix*BLOCK_SIZE+int(player.world_x-WIDTH/2)
-            x = base_x + ((x-base_x)//BLOCK_SIZE)*BLOCK_SIZE
-            for iy in range(0,hb):
-                y = iy*BLOCK_SIZE+int(player.world_y-HEIGHT/2)
-                
-                y = base_y + ((y-base_y)//BLOCK_SIZE)*BLOCK_SIZE
+            for iy in range(0, hb):
+                y = (
+                    iy * BLOCK_SIZE
+                    + int(player.world_y - HEIGHT / 2)
+                )
+
+                y = (
+                    base_y
+                    + ((y - base_y) // BLOCK_SIZE) * BLOCK_SIZE
+                )
+
                 for z in range(25):
-                    o = cls.objs.get((x,y,z))
-                    
-                    if o is not None:
-                        id = len(objs)+1
-                        objs[id] = o
-        
-        return objs
+                    object_ = cls.objs.get((x, y, z))
 
+                    if object_ is not None:
+                        id_ = len(objects) + 1
+                        objects[id_] = object_
 
-
-
-
-
-
-    FADE_MARGIN = BLOCK_SIZE * 1.5      # هرچقدر بزرگ‌تر، محدوده‌ی تشخیص وسیع‌تر
-    FADE_SPEED = 0.09                 # هرچقدر کوچیک‌تر، محو شدن نرم‌تر (کندتر)
-    FADE_MIN_ALPHA = 100                # کمترین شفافیت (۰ تا ۲۵۵)
-
-    def draw(self, display, bx, by, player=None):
-        # ---------- محاسبه‌ی هدف شفافیت ----------
-        target_alpha = 255
-
-        if player is not None:
-            m = self.FADE_MARGIN
-
-            overlap_x = (
-                self.world_x - m < player.world_x + player.width
-                and self.world_x + self.width + m > player.world_x
-            )
-            overlap_y = (
-                self.world_y - m < player.world_y + player.height
-                and self.world_y + self.height + m > player.world_y
-            )
-
-            if overlap_x and overlap_y and self.world_z > player.world_z:
-                target_alpha = self.FADE_MIN_ALPHA
-
-        # ---------- نرم کردن انتقال (لرپ) ----------
-        self.display_alpha += (
-            (target_alpha - self.display_alpha) * self.FADE_SPEED
-        )
-
-        alpha = int(self.display_alpha)
-
-        # ---------- Shadow ----------
-        z_height = max(0, self.world_z - 1)
-
-        shadow_width = max(
-            4,
-            int(self.width * (1 - z_height * 0.08))
-        )
-
-        shadow_height = max(
-            3,
-            int(self.height * 0.25 * (1 - z_height * 0.05))
-        )
-
-        shadow_alpha = max(
-            25,
-            int(80 - z_height * 8)
-        )
-        shadow_alpha = int(shadow_alpha * (alpha / 255))
-
-        shadow = pyg.Surface(
-            (shadow_width, shadow_height),
-            pyg.SRCALPHA
-        )
-
-        pyg.draw.ellipse(
-            shadow,
-            (0, 0, 0, shadow_alpha),
-            shadow.get_rect()
-        )
-
-        shadow_x = (
-            self.world_x
-            + bx
-            + (self.width - shadow_width) / 2
-        )
-
-        shadow_y = (
-            self.world_y
-            + by
-            + self.height
-            - shadow_height / 2
-            + z_height * 4
-        )
-
-        display.blit(
-            shadow,
-            (shadow_x, shadow_y)
-        )
-
-        # ---------- Object ----------
-        draw_y = (
-            self.world_y
-            + by
-        )
-
-        self.texture.set_alpha(alpha)
-        display.blit(
-            self.texture,
-            (
-                self.world_x + bx,
-                draw_y
-            )
-        )
-        self.texture.set_alpha(255)
+        return objects
