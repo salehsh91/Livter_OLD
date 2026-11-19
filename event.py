@@ -1,16 +1,17 @@
+import pygame as pyg
 
-
-def eventManager(ev,world):
-    if ev.type == pyg.KEYDOWN:
-        print(ev.key)
-        keys = pyg.key
-        if ev.key == pyg.K_w:
-            world.move(0,+5)
-        elif ev.key == pyg.K_s:
-            world.move(0,-5)
-        elif ev.key == pyg.K_d:
-            world.move(+5,0)
-        elif ev.key == pyg.K_a:
-            world.move(-5,0)
-            
-
+def eventManager(ev, world):
+    """Legacy pygame event adapter; the active SDL3 loop does not call this."""
+    if ev.type != pyg.KEYDOWN:
+        return
+    manager = getattr(world, "blockManager", None)
+    if manager is None:
+        return
+    if ev.key == pyg.K_w:
+        manager.move(0, 5)
+    elif ev.key == pyg.K_s:
+        manager.move(0, -5)
+    elif ev.key == pyg.K_d:
+        manager.move(-5, 0)
+    elif ev.key == pyg.K_a:
+        manager.move(5, 0)

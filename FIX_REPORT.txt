@@ -1,0 +1,38 @@
+Livter source correction report
+
+Corrected active SDL3 files:
+- main.py
+- cppfuncs.py
+- cmain.cpp
+- conster.py
+- texture.py
+- blockitem.py
+- worldchunk.py
+- BlockManager.py
+- camera.py
+- contoroler.py
+- npc.py
+- object.py
+- world.py
+
+Additional compatibility fixes:
+- Button.py: imports pygame under the alias used by its methods.
+- event.py: legacy event adapter no longer calls a nonexistent World.move().
+- structures.py: imports BLOCK_SIZE from conster rather than relying on wildcard leakage.
+- README.md: documents the active SDL3 backend and platform limitations.
+
+Checks performed:
+- All Python files parse successfully.
+- A simulated runtime smoke test exercised World creation, chunk generation,
+  player input update, C++ entity-data synchronization, and draw calls.
+- EntityData is 52 bytes in ctypes and matches the 13-field C++ struct.
+
+Not tested:
+- Actual Windows execution with SDL3, because this environment is not Windows.
+- C++ recompilation, because SDL3/SDL3_image development headers and import
+  libraries are not included in the uploaded ZIP.
+- Android packaging. buildozer.spec is an older Pygame/SDL2 setup.
+
+The included cppmain.dll is kept unchanged. It does not export RenderEntities,
+so the Python code uses the compatible drawobj fallback. Rebuilding the DLL
+from the updated cmain.cpp enables the entity-array renderer.

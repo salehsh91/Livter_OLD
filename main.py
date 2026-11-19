@@ -1,106 +1,62 @@
-
 import random
-from cppfuncs import *
 import ctypes
+
+import conster
+from cppfuncs import Init, Quit, getWinSize, CreateEntities, EntityData
+from contoroler import Contoroler_Key
 from npc import NPC
-class EntityData(ctypes.Structure):
-    _fields_ = [
-        ("kind", ctypes.c_int),
-        ("active", ctypes.c_int),
-        ("id", ctypes.c_int),
-
-        ("world_x", ctypes.c_float),
-        ("world_y", ctypes.c_float),
-        ("world_z", ctypes.c_float),
-
-        ("texture", ctypes.c_int),
-
-        ("width", ctypes.c_float),
-        ("height", ctypes.c_float),
-        ("length", ctypes.c_float),
-
-        ("bx", ctypes.c_float),
-        ("by", ctypes.c_float),
-
-        ("type", ctypes.c_int),
-        ("base_x", ctypes.c_float),
-        ("base_y", ctypes.c_float),
-        ("display_alpha", ctypes.c_float),
-    ]
+from texture import Texture
+from world import World
 
 MAX_ENTITIES = 20000
-EntityPointer = ctypes.POINTER(EntityData)
-entities = CreateEntities(20000)
-NPC.activate(entities,EntityPointer,MAX_ENTITIES)
 
+def main():
+    result = Init()
+    if result != 0:
+        raise RuntimeError("SDL3 initialization failed")
 
-from world import *
-import conster
-from texture import *
-# from contoroler import *
-# from hud import *
-screen = None
+    try:
+        width, height = getWinSize()
+        if width <= 0 or height <= 0:
+            raise RuntimeError("Could not read SDL window dimensions")
 
+        conster.WIDTH = width
+        conster.HEIGHT = height
 
+        Texture.init()
 
+        entity_pointer = CreateEntities(MAX_ENTITIES)
+        if not entity_pointer:
+            raise MemoryError("C++ could not allocate the entity array")
+        NPC.activate(
+            entity_pointer,
+            ctypes.POINTER(EntityData),
+            MAX_ENTITIES,
+        )
 
-running = True
-# playerContoroler = Contoroler_JoyStick(None,200,HEIGHT-200)
-playerContoroler = Contoroler_Key(screen)
-seed = random.randint(0, 999999999)
-print("seed:", seed)
+        seed = random.randint(0, 999999999)
+        print("seed:", seed)
 
-# 1. راه‌اندازی SDL
-Init()
+        controller = Contoroler_Key()
+        world = World(seed)
+        world.newPlayer(
+            50,
+            50,
+            width / 2 - 25,
+            height / 2 - 25,
+            Texture.npc1,
+            controller,
+        )
+        print("game started")
 
-# 2. دریافت ابعاد واقعی پنجره
-width, height = getWinSize()
+        running = True
+        while running:
+            running = world.update()
+            if running:
+                world.draw()
 
-# 3. ذخیره ابعاد
-conster.WIDTH = width
-conster.HEIGHT = height
+    finally:
+        Quit()
 
-# 4. بارگذاری تکسچرها
-Texture.init()
-
-# 5. ساخت جهان و پلیر
-
-
-world = World(seed)
-
-player = world.newPlayer(
-    50,
-    50,
-    WIDTH / 2 - 25,
-    HEIGHT / 2 - 25,
-    Texture.npc1,
-    playerContoroler
-)
-print("game started")
-
-
-
-
-
-running = 1
-while running == 1:
-
-    
-
-    world.update()
-
-    # screen.fill((0, 0, 0))
-
-    if Render:
-        
-        WIDTH,HEIGHT = getWinSize()
-        
-        running = world.draw()
-    else:
-        running = 0
-        
-        
-
-Quit()
-
-            
+if __name__ == "__main__":
+    main()

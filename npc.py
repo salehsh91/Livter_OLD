@@ -1,145 +1,156 @@
-
-import pygame as pyg
-
-from conster import *
+import conster
+from cppfuncs import EntityData, RenderEntities, DrawObj, GetRenderer
 from object import obj
 
-
 class NPC:
-
     npcs = []
+    _entity_array = None
+    _entity_capacity = 0
 
-    def __init__(self, w, h, x, y, display, world, color=COLORS["RED"],
-                 center=False, move=False):
+    @classmethod
+    def activate(cls, entities, pointer_type=None, max_entities=0):
+        # The pointer is allocated by C++ and its layout is EntityData above.
+        cls._entity_array = entities
+        cls._entity_capacity = int(max_entities)
+        cls.npcs.clear()
+
+    def __init__(self, w, h, x, y, display=None, world=None,
+                 color=None, center=False, move=False, texture=None):
         self.id = len(self.npcs) + 1
-        self.color = color
-        self.width = w
-        self.height = h
+        self.width = float(w)
+        self.height = float(h)
         self.display = display
-        self.realx = x
-        self.realy = y
-        self.world = world              # BlocksWorld
+        self.world = world
         self.health = 100
         self.hungry = 0
-        self.world_x = x
-        self.world_y = y
-        self.last_dx = 0
-        self.last_dy = 0
+        self.world_x = float(x)
+        self.world_y = float(y)
+        self.world_z = 0
+        self.last_dx = 0.0
+        self.last_dy = 0.0
         self.move = move
+        self.center = center
         self.direction = (0, 1)
+        self.texture = conster.DEFAULT_NPC_TEXTURE if texture is None else int(texture)
         self.npcs.append(self)
 
-    # ------------------------------------------------------------------
-    # API استاندارد (همان ورودی‌ای که بعداً مدل PyTorch هم می‌دهد)
-    # API = {"x": -1..1, "y": -1..1, "drap": bool}
-    # ------------------------------------------------------------------
-    def getAPI(self, API):
-        if API is None:
-            self.last_dx = 0
-            self.last_dy = 0
+    def getAPI(self, api):
+        if not api:
+            self.last_dx = self.last_dy = 0.0
             return
+        dx = float(api.get("x", 0.0)) * conster.NPC_SPEED
+        dy = float(api.get("y", 0.0)) * conster.NPC_SPEED
+        if dx or dy:
+            self.direction = (api.get("x", 0.0), api.get("y", 0.0))
+        self.world_x += dx
+        self.world_y += dy
+        self.last_dx, self.last_dy = dx, dy
 
-        x = API["x"] * NPC_SPEED
-        y = API["y"] * NPC_SPEED
-
-        # جهت فقط وقتی عوض می‌شود که حرکتی باشد (قبلاً با ایستادن (0,0) می‌شد)
-        if API["x"] != 0 or API["y"] != 0:
-            self.direction = (API["x"], API["y"])
-
-        self.world_x += x
-        self.world_y += y
-        self.last_dx = x
-        self.last_dy = y
-
-        if API["drap"]:
+        action = int(api.get("drap", 0) or 0)
+        if action > 0:
             self.drap()
+        elif action < 0:
+            self.undrap()
 
     def drap(self):
+        if self.world is None:
+            return False
         x, y = self.directionManager()
         ox, oy = self.world.base_x, self.world.base_y
         z = obj.zblock(x, y, 0, 0, ox, oy, True)
-        item = obj(x, y, z, name="plank", offset_x=ox, offset_y=oy)
-        return item.create()
+        return obj(x, y, z, name="plank", offset_x=ox, offset_y=oy).create()
+
+    def undrap(self):
+        if self.world is None:
+            return False
+        x, y = self.directionManager()
+        return obj.remove(
+            x, y, offset_x=self.world.base_x, offset_y=self.world.base_y
+        )[0]
 
     def update(self):
         pass
 
     def directionManager(self):
-        # سلول زیر مرکز NPC، هم‌تراز با شبکه‌ی بلوک‌های جهان
         ox, oy = self.world.base_x, self.world.base_y
         cx = self.world_x + self.width / 2
         cy = self.world_y + self.height / 2
-        x = ox + ((cx - ox) // BLOCK_SIZE) * BLOCK_SIZE
-        y = oy + ((cy - oy) // BLOCK_SIZE) * BLOCK_SIZE
-
+        x = ox + ((cx - ox) // conster.BLOCK_SIZE) * conster.BLOCK_SIZE
+        y = oy + ((cy - oy) // conster.BLOCK_SIZE) * conster.BLOCK_SIZE
         dx, dy = self.direction
-        if dx > 0:
-            x += BLOCK_SIZE
-        elif dx < 0:
-            x -= BLOCK_SIZE
-        if dy > 0:
-            y += BLOCK_SIZE
-        elif dy < 0:
-            y -= BLOCK_SIZE
+        if dx > 0: x += conster.BLOCK_SIZE
+        elif dx < 0: x -= conster.BLOCK_SIZE
+        if dy > 0: y += conster.BLOCK_SIZE
+        elif dy < 0: y -= conster.BLOCK_SIZE
         return x, y
 
     def getStatus(self):
-        return {"health": self.health, "hungry": self.hungry,
-                "x": self.world_x, "y": self.world_y}
+        return {
+            "health": self.health, "hungry": self.hungry,
+            "x": self.world_x, "y": self.world_y,
+        }
 
-    # ------------------------------------------------------------------
-    # دوربین
-    # ------------------------------------------------------------------
     def is_visible(self, camera, margin=0):
-        return camera.is_visible(self.world_x, self.world_y,
-                                 self.width, self.height, margin)
+        return camera.is_visible(
+            self.world_x, self.world_y, self.width, self.height, margin
+        )
 
     def to_render_data(self, camera):
-        """یک ردیف ساده برای ارسال به رندر C++ (مختصات صفحه)"""
         sx, sy = camera.world_to_screen(self.world_x, self.world_y)
-        return (self.id, sx, sy, self.width, self.height, self.color)
+        return (self.id, sx, sy, self.width, self.height, self.texture)
 
     @classmethod
     def visible_npcs(cls, camera, margin=0):
-        return [n for n in cls.npcs if n.is_visible(camera, margin)]
+        return [npc for npc in cls.npcs if npc.is_visible(camera, margin)]
 
     @classmethod
-    def drawNPC(cls, camera=None):
+    def sync_entities(cls, camera):
+        if cls._entity_array is None:
+            return
+        for index in range(cls._entity_capacity):
+            cls._entity_array[index].active = 0
+        write_index = 0
         for npc in cls.npcs:
-            if camera is not None:
-                if not npc.is_visible(camera):
-                    continue
-                sx, sy = camera.world_to_screen(npc.world_x, npc.world_y)
-            else:
-                sx = npc.world_x + npc.world.bx
-                sy = npc.world_y + npc.world.by
-            pyg.draw.rect(npc.display, npc.color,
-                          (sx, sy, npc.width, npc.height))
+            if write_index >= cls._entity_capacity:
+                break
+            if not npc.is_visible(camera):
+                continue
+            data = cls._entity_array[write_index]
+            write_index += 1
+            data.kind = 1
+            data.active = 1
+            data.id = npc.id
+            data.world_x = npc.world_x
+            data.world_y = npc.world_y
+            data.world_z = npc.world_z
+            data.texture = npc.texture
+            data.width = npc.width
+            data.height = npc.height
+            data.length = 0.0
+            data.bx = camera.x
+            data.by = camera.y
+            data.display_alpha = 1.0
 
+    @classmethod
+    def render_entities(cls, camera):
+        cls.sync_entities(camera)
+        if RenderEntities is not None:
+            RenderEntities()
+            return
+        # Compatibility path for the DLL already included in the uploaded ZIP.
+        renderer = GetRenderer()
+        for npc in cls.npcs:
+            if npc.is_visible(camera):
+                DrawObj(
+                    renderer,
+                    npc.world_x + camera.x,
+                    npc.world_y + camera.y,
+                    npc.width,
+                    npc.height,
+                    npc.texture,
+                )
 
 class NPC_Contoroler:
-
-    def __init__(self, up=pyg.K_w, down=pyg.K_s, left=pyg.K_a, right=pyg.K_d,
-                 drap=pyg.K_e, s=True):
-        self.key_up = up
-        self.key_down = down
-        self.key_left = left
-        self.key_right = right
-        self.key_drap = drap
-        self.s = s
-
-    def getAPI(self, keys):
-        x = 0
-        y = 0
-        if keys[self.key_up]:
-            y -= 1
-        if keys[self.key_down]:
-            y += 1
-        if keys[self.key_left]:
-            x -= 1
-        if keys[self.key_right]:
-            x += 1
-        api = {"x": x, "y": y, "drap": bool(keys[self.key_drap])}
-        if self.s:
-            return api
-        return None
+    """Legacy-compatible controller; the active SDL controller lives in contoroler.py."""
+    def getAPI(self, keys=None):
+        return {"x": 0, "y": 0, "drap": 0}

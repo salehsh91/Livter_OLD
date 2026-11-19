@@ -1,170 +1,61 @@
-
-"""
-hud.py  -  HUD جدا از pygame.
-
-ایده: HUD فقط «فهرست دستورهای رسم» می‌سازد (داده‌ی خالص، با layout ثابت).
-  - بک‌اند pygame (همین فایل) آن فهرست را می‌کشد.
-  - بک‌اند C++/SDL3 همان آرایه را از طریق ctypes می‌گیرد (hud_abi.h).
-پس HUD وقتی رندر عوض شود، دست نمی‌خورد.
-"""
 import ctypes
-import pygame as pyg
-
-# --- انواع دستور / آیکون‌ها (باید با hud_abi.h یکی باشد) ---
-CMD_ICON = 1
-
-ICON_HEALTH = 1
-ICON_FILES = {ICON_HEALTH: "assets/health.png"}
+import conster
+from cppfuncs import HUDSetData, HUDDraw, HUDGetSelectedSlot, HUDGetInventoryOpen
 
 
-class HUDCommand(ctypes.Structure):
-    """layout ثابت، ۲۸ بایت. معادل struct HUDCommand در C++."""
-    _fields_ = [
-        ("kind", ctypes.c_int32),
-        ("icon", ctypes.c_int32),
-        ("x", ctypes.c_float),
-        ("y", ctypes.c_float),
-        ("w", ctypes.c_float),
-        ("h", ctypes.c_float),
-        ("value", ctypes.c_float),
-    ]
+class HUD:
+    """Python data bridge; SDL3/C++ owns all HUD drawing and mouse handling."""
+    def __init__(self, inventory=None):
+        self.inventory = inventory
+        self.maxslots = getattr(inventory, "slotnum", 12)
+        self.linesizedir = int(getattr(conster, "camdirline", 50))
 
+    @staticmethod
+    def _item_texture(item):
+        if item is None:
+            return -1
+        if isinstance(item, dict):
+            value = item.get("texture", -1)
+        else:
+            value = getattr(item, "texture", -1)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return -1
 
-def build_commands(status, icon_size=10):
-    """status = NPC.getStatus() → فهرست HUDCommand (بدون هیچ وابستگی به pygame)"""
-    hearts = max(0, int(status["health"]) // 10)
-    commands = []
-    x = 10 + icon_size
-    for i in range(hearts):
-        y = i * 12 + icon_size
-        commands.append(HUDCommand(CMD_ICON, ICON_HEALTH, x, y,
-                                   icon_size, icon_size, 1.0))
-    return commands
+    def draw(self, player):
+        if player is None:
+            return
 
+        status = player.getStatus()
+        health = max(0, min(100, int(status.get("health", 0))))
+        hungry = max(0, min(100, int(status.get("hungry", 0))))
 
-def to_c_array(commands):
-    """(آرایه‌ی ctypes, تعداد) برای پاس دادن به تابع C++"""
-    arr = (HUDCommand * max(1, len(commands)))(*commands)
-    return arr, len(commands)
+        angle = float(getattr(player, "cameradir", 0.0))
 
+        slots = self.inventory.getinvertory() if self.inventory else {}
+        count = min(self.maxslots, 64)
+        textures = (ctypes.c_int * 64)(*([-1] * 64))
+        counts = (ctypes.c_int * 64)(*([0] * 64))
+        active = (ctypes.c_int * 64)(*([0] * 64))
 
-class PygameHUDRenderer:
-    def __init__(self, display):
-        self.display = display
-        self._icons = {}
+        for slot_id, data in slots.items():
+            index = int(slot_id) - 1
+            if index < 0 or index >= count:
+                continue
+            item, amount = data[0], data[1]
+            textures[index] = self._item_texture(item)
+            counts[index] = max(0, int(amount))
+            active[index] = int(bool(data[2])) if len(data) > 2 else 0
 
-    def _icon(self, icon_id, w, h):
-        key = (icon_id, int(w), int(h))
-        if key not in self._icons:
-            img = pyg.image.load(ICON_FILES[icon_id]).convert_alpha()
-            self._icons[key] = pyg.transform.scale(img, (int(w), int(h)))
-        return self._icons[key]
+        selected = HUDGetSelectedSlot()
+        if selected and self.inventory:
+            for key, data in list(slots.items()):
+                self.inventory.slots[key] = (data[0], data[1], key == selected)
 
-    def draw(self, commands):
-        for c in commands:
-            if c.kind == CMD_ICON:
-                self.display.blit(self._icon(c.icon, c.w, c.h),
-                                  (int(c.x), int(c.y)))
+        HUDSetData(health, hungry, angle, textures, counts, active, count)
+        HUDDraw(self.linesizedir)
 
-
-class HealthBar:
-    """همان رابط قبلی (display, API / update / draw) تا main.py عوض نشود."""
-
-    def __init__(self, display, API):
-        self.objsize = 10
-        self.renderer = PygameHUDRenderer(display)
-        self.commands = build_commands(API, self.objsize)
-
-    def update(self, API):
-        self.commands = build_commands(API, self.objsize)
-
-    def draw(self):
-        self.renderer.draw(self.commands)
-
-    def c_commands(self):
-        return to_c_array(self.commands)
-
-"""
-hud.py  -  HUD جدا از pygame.
-
-ایده: HUD فقط «فهرست دستورهای رسم» می‌سازد (داده‌ی خالص، با layout ثابت).
-  - بک‌اند pygame (همین فایل) آن فهرست را می‌کشد.
-  - بک‌اند C++/SDL3 همان آرایه را از طریق ctypes می‌گیرد (hud_abi.h).
-پس HUD وقتی رندر عوض شود، دست نمی‌خورد.
-"""
-import ctypes
-import pygame as pyg
-
-# --- انواع دستور / آیکون‌ها (باید با hud_abi.h یکی باشد) ---
-CMD_ICON = 1
-
-ICON_HEALTH = 1
-ICON_FILES = {ICON_HEALTH: "assets/health.png"}
-
-
-class HUDCommand(ctypes.Structure):
-    """layout ثابت، ۲۸ بایت. معادل struct HUDCommand در C++."""
-    _fields_ = [
-        ("kind", ctypes.c_int32),
-        ("icon", ctypes.c_int32),
-        ("x", ctypes.c_float),
-        ("y", ctypes.c_float),
-        ("w", ctypes.c_float),
-        ("h", ctypes.c_float),
-        ("value", ctypes.c_float),
-    ]
-
-
-def build_commands(status, icon_size=10):
-    """status = NPC.getStatus() → فهرست HUDCommand (بدون هیچ وابستگی به pygame)"""
-    hearts = max(0, int(status["health"]) // 10)
-    commands = []
-    x = 10 + icon_size
-    for i in range(hearts):
-        y = i * 12 + icon_size
-        commands.append(HUDCommand(CMD_ICON, ICON_HEALTH, x, y,
-                                   icon_size, icon_size, 1.0))
-    return commands
-
-
-def to_c_array(commands):
-    """(آرایه‌ی ctypes, تعداد) برای پاس دادن به تابع C++"""
-    arr = (HUDCommand * max(1, len(commands)))(*commands)
-    return arr, len(commands)
-
-
-class PygameHUDRenderer:
-    def __init__(self, display):
-        self.display = display
-        self._icons = {}
-
-    def _icon(self, icon_id, w, h):
-        key = (icon_id, int(w), int(h))
-        if key not in self._icons:
-            img = pyg.image.load(ICON_FILES[icon_id]).convert_alpha()
-            self._icons[key] = pyg.transform.scale(img, (int(w), int(h)))
-        return self._icons[key]
-
-    def draw(self, commands):
-        for c in commands:
-            if c.kind == CMD_ICON:
-                self.display.blit(self._icon(c.icon, c.w, c.h),
-                                  (int(c.x), int(c.y)))
-
-
-class HealthBar:
-    """همان رابط قبلی (display, API / update / draw) تا main.py عوض نشود."""
-
-    def __init__(self, display, API):
-        self.objsize = 10
-        self.renderer = PygameHUDRenderer(display)
-        self.commands = build_commands(API, self.objsize)
-
-    def update(self, API):
-        self.commands = build_commands(API, self.objsize)
-
-    def draw(self):
-        self.renderer.draw(self.commands)
-
-    def c_commands(self):
-        return to_c_array(self.commands)
+    @property
+    def inventory_open(self):
+        return bool(HUDGetInventoryOpen())

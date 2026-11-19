@@ -1,16 +1,10 @@
-
-"""
-camera.py  -  دوربین. منبع حقیقت همان bx/by در BlocksWorld است؛
-این کلاس فقط تبدیل مختصات و تست دیده‌شدن را در یک جا جمع می‌کند.
-"""
-from conster import WIDTH, HEIGHT
-
+import conster
 
 class Camera:
-    def __init__(self, source, width=WIDTH, height=HEIGHT):
-        self.source = source      # شیئی که bx و by دارد (BlocksWorld)
-        self.width = width
-        self.height = height
+    def __init__(self, source, width=None, height=None):
+        self.source = source
+        self.width = conster.WIDTH if width is None else width
+        self.height = conster.HEIGHT if height is None else height
 
     @property
     def x(self):
@@ -26,6 +20,6 @@ class Camera:
     def is_visible(self, wx, wy, w, h, margin=0):
         sx, sy = self.world_to_screen(wx, wy)
         return not (
-            sx + w < -margin or sx > self.width + margin or
-            sy + h < -margin or sy > self.height + margin
+            sx + w < -margin or sx > self.width + margin
+            or sy + h < -margin or sy > self.height + margin
         )

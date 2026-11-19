@@ -1,184 +1,106 @@
 import ctypes
-import threading
+import os
 
 class EntityData(ctypes.Structure):
+    # Must match struct EntityData in cmain.cpp exactly.
     _fields_ = [
-        ("kind", ctypes.c_int),          # 0 = obj ، 1 = NPC
-        ("active", ctypes.c_int),        # 0 = inactive ، 1 = active
-
+        ("kind", ctypes.c_int),
+        ("active", ctypes.c_int),
         ("id", ctypes.c_int),
-
         ("world_x", ctypes.c_float),
         ("world_y", ctypes.c_float),
         ("world_z", ctypes.c_float),
-
         ("texture", ctypes.c_int),
-
         ("width", ctypes.c_float),
         ("height", ctypes.c_float),
         ("length", ctypes.c_float),
-
         ("bx", ctypes.c_float),
         ("by", ctypes.c_float),
-
         ("display_alpha", ctypes.c_float),
     ]
 
-lib = ctypes.CDLL("./cppmain.dll")
+_DLL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cppmain.dll")
+lib = ctypes.CDLL(_DLL_PATH)
 
+def loadFunction(name, args=None, result=None):
+    fn = getattr(lib, name)
+    if args is not None:
+        fn.argtypes = args
+    fn.restype = result
+    return fn
 
-def loadFunction(name, one=None, two=None):
-    f = getattr(lib, name)
+Init = loadFunction("Init", result=ctypes.c_int)
+Quit = loadFunction("Quit", result=ctypes.c_int)
+RenderFrame = loadFunction("render", result=ctypes.c_int)
+present = loadFunction("present")
+GetRenderer = loadFunction("GetRENDERER", result=ctypes.c_void_p)
+GetWindow = loadFunction("GetWINDOW", result=ctypes.c_void_p)
 
-    if one is not None:
-        f.argtypes = one
-
-    f.restype = two
-    return f
-
-
-class draw:
-
-    @classmethod
-    def draw(cls, array):
-        pass
-
-
-# -------------------------
-# SDL / Window
-# -------------------------
-
-Init = loadFunction(
-    "Init",
-    two=ctypes.c_int
-)
-
-Quit = loadFunction(
-    "Quit",
-    two=ctypes.c_int
-)
-
-Render = loadFunction(
-    "render",
-    two=ctypes.c_int
-)
-
-present = loadFunction(
-    "present"
-)
-
-GetRenderer = loadFunction(
-    "GetRENDERER",
-    two=ctypes.c_void_p
-)
-
-GetWindow = loadFunction(
-    "GetWINDOW",
-    two=ctypes.c_void_p
-)
-
-GetWinSize = loadFunction(
+GetWindowSizeRaw = loadFunction(
     "GetWindowsize",
-    one=[
-        ctypes.POINTER(ctypes.c_int),
-        ctypes.POINTER(ctypes.c_int)
-    ]
+    args=[ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+          ctypes.c_void_p],
 )
-
-
-# -------------------------
-# Texture
-# -------------------------
 
 LoadTexture = loadFunction(
     "LoadTexture",
-    one=[
-        ctypes.c_void_p,
-        ctypes.c_uint8,
-        ctypes.c_uint8,
-        ctypes.c_uint8,
-        ctypes.c_uint8
-    ],
-    two=ctypes.c_int
+    args=[ctypes.c_void_p, ctypes.c_uint8, ctypes.c_uint8,
+          ctypes.c_uint8, ctypes.c_uint8],
+    result=ctypes.c_int,
 )
-
 LoadImageTexture = loadFunction(
     "LoadImageTexture",
-    one=[
-        ctypes.c_void_p,
-        ctypes.c_char_p
-    ],
-    two=ctypes.c_int
+    args=[ctypes.c_void_p, ctypes.c_char_p],
+    result=ctypes.c_int,
 )
-
-
-# -------------------------
-# Drawing
-# -------------------------
+HUDSetData = loadFunction(
+    "HUDSetData",
+    args=[ctypes.c_int, ctypes.c_int, ctypes.c_float,
+          ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+          ctypes.POINTER(ctypes.c_int), ctypes.c_int],
+)
+HUDDraw = loadFunction("HUDDraw", args=[ctypes.c_int])
+HUDGetSelectedSlot = loadFunction("HUDGetSelectedSlot", result=ctypes.c_int)
+HUDGetInventoryOpen = loadFunction("HUDGetInventoryOpen", result=ctypes.c_int)
 
 DrawObj = loadFunction(
     "drawobj",
-    one=[
-        ctypes.c_void_p,
-        ctypes.c_float,
-        ctypes.c_float,
-        ctypes.c_float,
-        ctypes.c_float,
-        ctypes.c_int
-    ],
-    two=None
+    args=[ctypes.c_void_p, ctypes.c_float, ctypes.c_float,
+          ctypes.c_float, ctypes.c_float, ctypes.c_int],
+    result=ctypes.c_bool,
 )
-
 pr = loadFunction(
     "pr",
-    one=[
-        ctypes.POINTER(ctypes.c_int32),
-        ctypes.POINTER(ctypes.c_int32),
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_float,
-        ctypes.c_float,
-        ctypes.c_float,
-        ctypes.c_float
-    ],
-    two=None
+    args=[ctypes.POINTER(ctypes.c_int32),
+          ctypes.POINTER(ctypes.c_int32),
+          ctypes.c_int, ctypes.c_int, ctypes.c_int,
+          ctypes.c_float, ctypes.c_float,
+          ctypes.c_float, ctypes.c_float],
 )
-
-
-# -------------------------
-# Input
-# -------------------------
-
 ck = loadFunction(
     "keycont",
-    one=[
-        ctypes.POINTER(ctypes.c_int),
-        ctypes.c_int,
-        ctypes.POINTER(ctypes.c_int),
-        ctypes.c_int,
-        ctypes.POINTER(ctypes.c_char),
-        ctypes.c_int
-    ],
-    two=ctypes.c_char
+    args=[ctypes.POINTER(ctypes.c_int), ctypes.c_int,
+          ctypes.POINTER(ctypes.c_int), ctypes.c_int,
+          ctypes.POINTER(ctypes.c_char), ctypes.c_int],
 )
 
 CreateEntities = loadFunction(
     "CreateEntities",
-    one=[ctypes.c_int],
-    two=ctypes.POINTER(EntityData)
+    args=[ctypes.c_int],
+    result=ctypes.POINTER(EntityData),
 )
-# -------------------------
-# Helpers
-# -------------------------
+try:
+    RenderEntities = loadFunction("RenderEntities", result=ctypes.c_int)
+except AttributeError:
+    # Older DLL builds do not yet export this optional batch renderer.
+    RenderEntities = None
 
 def getWinSize():
     width = ctypes.c_int()
     height = ctypes.c_int()
-
-    GetWinSize(
+    GetWindowSizeRaw(
         ctypes.byref(width),
-        ctypes.byref(height)
+        ctypes.byref(height),
+        GetWindow(),
     )
-
     return width.value, height.value

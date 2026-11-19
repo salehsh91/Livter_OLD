@@ -1,0 +1,15 @@
+Livter HUD + keyboard input fix
+
+Changed files:
+- hud.py: removed pygame dependency; draws fixed-screen health and hunger bars using existing SDL3 texture/draw APIs. Adds small pixel labels/numbers.
+- world.py: creates HUD after SDL initialization and draws it after world/NPC rendering but before present().
+- contoroler.py: W/A/S/D remain held inputs; Q (drop/place) is now also a held input; E and T remain one-frame press inputs. Diagonal movement is normalized.
+- cmain.cpp: held keys are tracked from SDL_KEY_DOWN/SDL_KEY_UP events rather than relying on SDL_GetKeyboardState; pressed_this_frame remains separate. Held state is cleared on focus loss.
+
+Important build note:
+The included cppmain.dll is the existing DLL and does NOT contain the cmain.cpp event-tracking change. Rebuild cppmain.dll from the included cmain.cpp for the robust held-key tracking change to take effect. The Python controller's Q-held behavior is wired to the existing keycont API as well.
+
+Checks performed:
+- Python syntax compilation passed for hud.py, contoroler.py, world.py, main.py, cppfuncs.py.
+- Mocked controller tests passed for held movement, diagonal normalization, held Q/drop, and one-frame E/T presses.
+- SDL rendering and Windows DLL compilation were not run in this environment.

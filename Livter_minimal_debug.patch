@@ -1,0 +1,595 @@
+--- a/BlockManager.py
++++ b/BlockManager.py
+@@ -4,6 +4,7 @@
+ from conster import *
+ from texture import *
+ from cppfuncs import *
++import ctypes
+ import time
+ 
+ class BlocksWorld:
+@@ -860,17 +861,56 @@
+     # Draw
+     # ==================================================
+ 
+-    def drawBlocks(self, display):
+-
++    def drawBlocks(self, display=None):
++
++        visible_chunks = []
+         for key in self.get_visible_chunks():
+-
+-            if key in self.Chunks:
+-
+-                self.Chunks[key].draw(
+-                    display,
+-                    self.bx,
+-                    self.by
+-                )
++            chunk = self.Chunks.get(key)
++            if chunk is not None and chunk.is_loaded:
++                visible_chunks.append((key, chunk))
++
++        if not visible_chunks:
++            return
++
++        chunk_count = len(visible_chunks)
++        blocks_per_chunk = self.CHUNK_SIZE * self.CHUNK_SIZE
++
++        BlockArray = ctypes.c_int32 * (chunk_count * blocks_per_chunk)
++        CoordArray = ctypes.c_int32 * (chunk_count * 2)
++        block_data = BlockArray()
++        chunk_coords = CoordArray()
++
++        for chunk_index, (key, chunk) in enumerate(visible_chunks):
++            cx, cy = key
++            chunk_coords[chunk_index * 2] = cx
++            chunk_coords[chunk_index * 2 + 1] = cy
++
++            base_index = chunk_index * blocks_per_chunk
++            for (local_x, local_y), block in chunk.blocks.items():
++                if not (0 <= local_x < self.CHUNK_SIZE and
++                        0 <= local_y < self.CHUNK_SIZE):
++                    continue
++
++                texture_id = getattr(block, "texture", None)
++                if texture_id is None and isinstance(block, dict):
++                    texture_id = block.get("texture", 0)
++                if texture_id is None:
++                    texture_id = 0
++
++                block_index = local_y * self.CHUNK_SIZE + local_x
++                block_data[base_index + block_index] = int(texture_id)
++
++        pr(
++            block_data,
++            chunk_coords,
++            chunk_count,
++            self.CHUNK_SIZE,
++            self.bw,
++            self.bx,
++            self.by,
++            self.base_x,
++            self.base_y
++        )
+ 
+     # ==================================================
+     # Texture
+@@ -992,41 +1032,16 @@
+                     )
+                 )
+ 
+-                # ======================================
+-                # فعلاً فقط Layer 0
+-                # ======================================
+-
+-                if 0 not in chunk.blocks:
+-                    continue
+-
+-                
+-
+-                layer_blocks = chunk.blocks[0]
+-
+-                for lx in range(
+-                    local_start_x,
+-                    local_end_x + 1
+-                ):
+-
+-                    for ly in range(
+-                        local_start_y,
+-                        local_end_y + 1
+-                    ):
+-
+-                        keyb = (
+-                            ly * self.CHUNK_SIZE +lx
++                # Chunk.blocks is keyed by (local_x, local_y), not by Z layer.
++                for lx in range(local_start_x, local_end_x + 1):
++                    for ly in range(local_start_y, local_end_y + 1):
++                        block = chunk.blocks.get((lx, ly))
++                        if block is None:
++                            continue
++
++                        keyb = ly * self.CHUNK_SIZE + lx
++                        blocks[(cx, cy), keyb] = getattr(
++                            block, "type", getattr(block, "name", "unknown")
+                         )
+ 
+-                        
+-
+-                        blocks[
+-                            (cx, cy),
+-                            keyb
+-                        ] = (
+-                            # layer_blocks[
+-                            #     keyb
+-                            # ].type
+-                            "plank"
+-                        )
+-
+         return blocks
+--- a/contoroler.py
++++ b/contoroler.py
+@@ -89,6 +89,8 @@
+         debug = "T" in pressed
+ 
+         return {
++            "x": x,
++            "y": y,
+             "dir": direction,
+             "move": move,
+             "cameradir": direction,
+
+--- a/cppfuncs.py
++++ b/cppfuncs.py
+@@ -81,7 +81,8 @@
+     "GetWindowsize",
+     one=[
+         ctypes.POINTER(ctypes.c_int),
+-        ctypes.POINTER(ctypes.c_int)
++        ctypes.POINTER(ctypes.c_int),
++        ctypes.c_void_p
+     ]
+ )
+ 
+@@ -126,7 +127,7 @@
+         ctypes.c_float,
+         ctypes.c_int
+     ],
+-    two=None
++    two=ctypes.c_bool
+ )
+ 
+ pr = loadFunction(
+@@ -160,7 +161,7 @@
+         ctypes.POINTER(ctypes.c_char),
+         ctypes.c_int
+     ],
+-    two=ctypes.c_char
++    two=None
+ )
+ 
+ CreateEntities = loadFunction(
+@@ -178,7 +179,8 @@
+ 
+     GetWinSize(
+         ctypes.byref(width),
+-        ctypes.byref(height)
++        ctypes.byref(height),
++        None
+     )
+ 
+     return width.value, height.value
+--- a/main.py
++++ b/main.py
+@@ -1,106 +1,55 @@
+-
+ import random
++import ctypes
++import conster
+ from cppfuncs import *
+-import ctypes
+-from npc import NPC
+-class EntityData(ctypes.Structure):
+-    _fields_ = [
+-        ("kind", ctypes.c_int),
+-        ("active", ctypes.c_int),
+-        ("id", ctypes.c_int),
+-
+-        ("world_x", ctypes.c_float),
+-        ("world_y", ctypes.c_float),
+-        ("world_z", ctypes.c_float),
+-
+-        ("texture", ctypes.c_int),
+-
+-        ("width", ctypes.c_float),
+-        ("height", ctypes.c_float),
+-        ("length", ctypes.c_float),
+-
+-        ("bx", ctypes.c_float),
+-        ("by", ctypes.c_float),
+-
+-        ("type", ctypes.c_int),
+-        ("base_x", ctypes.c_float),
+-        ("base_y", ctypes.c_float),
+-        ("display_alpha", ctypes.c_float),
+-    ]
+-
+-MAX_ENTITIES = 20000
+-EntityPointer = ctypes.POINTER(EntityData)
+-entities = CreateEntities(20000)
+-NPC.activate(entities,EntityPointer,MAX_ENTITIES)
+ 
+ 
+-from world import *
+-import conster
+-from texture import *
+-# from contoroler import *
+-# from hud import *
+-screen = None
++# SDL must be initialized before querying window dimensions or loading textures.
++if Init() != 0:
++    raise RuntimeError("SDL initialization failed")
+ 
++try:
++    width, height = getWinSize()
++    if width <= 0 or height <= 0:
++        raise RuntimeError(f"Invalid SDL window size: {width}x{height}")
+ 
++    conster.WIDTH = width
++    conster.HEIGHT = height
+ 
++    # Import these after setting WIDTH/HEIGHT because the existing modules
++    # import those values from conster when they are loaded.
++    from contoroler import Contoroler_Key
++    from npc import NPC
++    from texture import Texture
++    from world import World
+ 
+-running = True
+-# playerContoroler = Contoroler_JoyStick(None,200,HEIGHT-200)
+-playerContoroler = Contoroler_Key(screen)
+-seed = random.randint(0, 999999999)
+-print("seed:", seed)
++    MAX_ENTITIES = 20000
++    EntityPointer = ctypes.POINTER(EntityData)
++    entities = CreateEntities(MAX_ENTITIES)
++    NPC.activate(entities, EntityPointer, MAX_ENTITIES)
+ 
+-# 1. راه‌اندازی SDL
+-Init()
++    playerContoroler = Contoroler_Key()
++    seed = random.randint(0, 999999999)
++    print("seed:", seed)
+ 
+-# 2. دریافت ابعاد واقعی پنجره
+-width, height = getWinSize()
++    if not Texture.init():
++        print("Warning: one or more textures could not be loaded from the assets folder")
+ 
+-# 3. ذخیره ابعاد
+-conster.WIDTH = width
+-conster.HEIGHT = height
++    world = World(seed)
++    player = world.newPlayer(
++        50,
++        50,
++        conster.WIDTH / 2 - 25,
++        conster.HEIGHT / 2 - 25,
++        Texture.npc1,
++        playerContoroler,
++    )
++    print("game started")
+ 
+-# 4. بارگذاری تکسچرها
+-Texture.init()
++    while conster.Render:
++        if not world.update():
++            break
++        world.draw()
+ 
+-# 5. ساخت جهان و پلیر
+-
+-
+-world = World(seed)
+-
+-player = world.newPlayer(
+-    50,
+-    50,
+-    WIDTH / 2 - 25,
+-    HEIGHT / 2 - 25,
+-    Texture.npc1,
+-    playerContoroler
+-)
+-print("game started")
+-
+-
+-
+-
+-
+-running = 1
+-while running == 1:
+-
+-    
+-
+-    world.update()
+-
+-    # screen.fill((0, 0, 0))
+-
+-    if Render:
+-        
+-        WIDTH,HEIGHT = getWinSize()
+-        
+-        running = world.draw()
+-    else:
+-        running = 0
+-        
+-        
+-
+-Quit()
+-
+-            +finally:
++    Quit()
+
+--- a/npc.py
++++ b/npc.py
+@@ -8,6 +8,18 @@
+ class NPC:
+ 
+     npcs = []
++    entities = None
++    entity_pointer_type = None
++    max_entities = 0
++
++    @classmethod
++    def activate(cls, entities, entity_pointer_type, max_entities):
++        """Keep the C++-allocated entity buffer for the NPC system."""
++        if not entities:
++            raise MemoryError("CreateEntities returned a null pointer")
++        cls.entities = entities
++        cls.entity_pointer_type = entity_pointer_type
++        cls.max_entities = int(max_entities)
+ 
+     def __init__(self, w, h, x, y, display, world, color=COLORS["RED"],
+                  center=False, move=False):
+@@ -51,8 +63,11 @@
+         self.last_dx = x
+         self.last_dy = y
+ 
+-        if API["drap"]:
++        action = API.get("drap", 0)
++        if action > 0:
+             self.drap()
++        elif action < 0:
++            self.undrap()
+ 
+     def drap(self):
+         x, y = self.directionManager()
+@@ -60,6 +75,11 @@
+         z = obj.zblock(x, y, 0, 0, ox, oy, True)
+         item = obj(x, y, z, name="plank", offset_x=ox, offset_y=oy)
+         return item.create()
++
++    def undrap(self):
++        x, y = self.directionManager()
++        ox, oy = self.world.base_x, self.world.base_y
++        return obj.remove(x, y, offset_x=ox, offset_y=oy)
+ 
+     def update(self):
+         pass
+@@ -128,18 +148,23 @@
+         self.key_drap = drap
+         self.s = s
+ 
+-    def getAPI(self, keys):
++    def getAPI(self, keys=None):
+         x = 0
+         y = 0
+-        if keys[self.key_up]:
+-            y -= 1
+-        if keys[self.key_down]:
+-            y += 1
+-        if keys[self.key_left]:
+-            x -= 1
+-        if keys[self.key_right]:
+-            x += 1
+-        api = {"x": x, "y": y, "drap": bool(keys[self.key_drap])}
++        if keys is not None:
++            if keys[self.key_up]:
++                y -= 1
++            if keys[self.key_down]:
++                y += 1
++            if keys[self.key_left]:
++                x -= 1
++            if keys[self.key_right]:
++                x += 1
++        api = {
++            "x": x,
++            "y": y,
++            "drap": bool(keys[self.key_drap]) if keys is not None else False
++        }
+         if self.s:
+             return api
+         return None
+
+--- a/texture.py
++++ b/texture.py
+@@ -14,21 +14,52 @@
+     pass
+ 
+ class Texture:
++    empty = -2
+     grass = water = stone = sand = plank = health = hungry = oak = leaves = -2
+     npc1 = -2
+ 
+     
+     
+-    def init():
++    @classmethod
++    def init(cls):
+         renderer = GetRenderer()
+-        grass = LoadImageTexture(renderer, b"assets/grass.png")
+-        water = LoadImageTexture(renderer, b"assets/water.png")
+-        stone = LoadImageTexture(renderer, b"assets/stone.png")
+-        sand = LoadImageTexture(renderer, b"assets/sand.png")
+-        plank = LoadImageTexture(renderer, b"assets/plank.png")
+-        health = LoadImageTexture(renderer, b"assets/health.png")
+-        hungry = LoadImageTexture(renderer, b"assets/hungry.png")
+-        oak = LoadImageTexture(renderer, b"assets/oak.png")
+-        leaves = LoadImageTexture(renderer, b"assets/leaves.png")
++        if not renderer:
++            raise RuntimeError("SDL renderer is not initialized")
+ 
+-        npc1 = LoadTexture(renderer,255,0,0,255)+        # The C++ chunk renderer treats texture ID 0 as an empty cell.
++        cls.empty = LoadTexture(renderer, 0, 0, 0, 0)
++
++        cls.grass = LoadImageTexture(
++            renderer, os.fsencode(os.path.join(ASSETS_DIR, "grass.png"))
++        )
++        cls.water = LoadImageTexture(
++            renderer, os.fsencode(os.path.join(ASSETS_DIR, "water.png"))
++        )
++        cls.stone = LoadImageTexture(
++            renderer, os.fsencode(os.path.join(ASSETS_DIR, "stone.png"))
++        )
++        cls.sand = LoadImageTexture(
++            renderer, os.fsencode(os.path.join(ASSETS_DIR, "sand.png"))
++        )
++        cls.plank = LoadImageTexture(
++            renderer, os.fsencode(os.path.join(ASSETS_DIR, "plank.png"))
++        )
++        cls.health = LoadImageTexture(
++            renderer, os.fsencode(os.path.join(ASSETS_DIR, "health.png"))
++        )
++        cls.hungry = LoadImageTexture(
++            renderer, os.fsencode(os.path.join(ASSETS_DIR, "hungry.png"))
++        )
++        cls.oak = LoadImageTexture(
++            renderer, os.fsencode(os.path.join(ASSETS_DIR, "oak.png"))
++        )
++        cls.leaves = LoadImageTexture(
++            renderer, os.fsencode(os.path.join(ASSETS_DIR, "leaves.png"))
++        )
++
++        cls.npc1 = LoadTexture(renderer, 255, 0, 0, 255)
++
++        return all(texture_id >= 0 for texture_id in (
++            cls.empty, cls.grass, cls.water, cls.stone, cls.sand, cls.plank,
++            cls.health, cls.hungry, cls.oak, cls.leaves, cls.npc1
++        ))
+
+--- a/world.py
++++ b/world.py
+@@ -1,39 +1,86 @@
+-
+-import pygame as pyg
++import conster
+ 
+ from conster import *
++import BlockManager as block_manager_module
++import object as object_module
+ from BlockManager import *
+ from npc import *
+ from object import *
+ from camera import Camera
++from cppfuncs import (
++    Render as CPP_Render,
++    present as CPP_Present,
++    GetRenderer,
++    getWinSize,
++    DrawObj,
++)
+ 
+ 
+ class World:
+ 
+-    def __init__(self, seed, display):
++    def __init__(self, seed, display=None):
+         self.npcs = {}
+         self.player = None
+         self.seed = seed
+         self.display = display
+         self.blockManager = BlocksWorld(seed)
+-        self.blockManager.create(self.display)
++        self.blockManager.create()
+         self.camera = Camera(self.blockManager)
+ 
+     def update(self):
+-        self.blockManager.update_background_loading(self.display)
++        # SDL event polling must happen before reading SDL keyboard state.
++        if not CPP_Render():
++            return False
+ 
+-        keys = pyg.key.get_pressed()
++        width, height = getWinSize()
++        if width > 0 and height > 0:
++            self.camera.width = width
++            self.camera.height = height
++            block_manager_module.WIDTH = width
++            block_manager_module.HEIGHT = height
++            object_module.WIDTH = width
++            object_module.HEIGHT = height
++
++        self.blockManager.update_background_loading()
++
+         for npc_id, (data, contoroler) in self.npcs.items():
+-            data.getAPI(contoroler.getAPI(keys))
++            data.getAPI(contoroler.getAPI())
+             data.update()
+ 
+         if self.player:
+             self.blockManager.move(-self.player.last_dx, self.player.last_dy)
+ 
++        return True
++
+     def draw(self):
+-        self.blockManager.drawBlocks(self.display)
+-        obj.drawObjects(self.display, self.camera.x, self.camera.y)
+-        NPC.drawNPC(self.camera)
++        renderer = GetRenderer()
++        self.blockManager.drawBlocks()
++
++        # Objects are drawn by SDL3, in their existing Z order.
++        for item in sorted(obj.objs.values(), key=lambda value: value.world_z):
++            if item.is_visible(self.camera.x, self.camera.y):
++                DrawObj(
++                    renderer,
++                    item.world_x + self.camera.x,
++                    item.world_y + self.camera.y,
++                    item.width,
++                    item.height,
++                    item.texture,
++                )
++
++        # NPC.color contains the SDL texture ID passed by main.py.
++        for npc, _controller in self.npcs.values():
++            if npc.is_visible(self.camera):
++                DrawObj(
++                    renderer,
++                    npc.world_x + self.camera.x,
++                    npc.world_y + self.camera.y,
++                    npc.width,
++                    npc.height,
++                    npc.color,
++                )
++
++        CPP_Present()
+ 
+     def get_frame_data(self):
+         """
+
+--- a/worldchunk.py
++++ b/worldchunk.py
+@@ -26,8 +26,10 @@
+             for local_y in range(self.chunk_size):
+                 global_x = self.chunk_x * self.chunk_size + local_x
+                 global_y = self.chunk_y * self.chunk_size + local_y
+-                _, texture = noise_functions(global_x, global_y)
+-                self.blocks[(local_x, local_y)] = Block.getblock_status(texture)
++                block_name, _ = noise_functions(global_x, global_y)
++                self.blocks[(local_x, local_y)] = Block.getblock_status(
++                    name=block_name
++                )
+         self.is_loaded = True
+ 
+     def set_blocks(self, blocks_dict):
+

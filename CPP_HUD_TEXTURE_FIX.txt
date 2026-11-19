@@ -1,0 +1,29 @@
+Livter - C++ HUD and texture loading fix
+
+Changed files only:
+- cmain.cpp: SDL3 draws health/hunger icons, inventory panel/slots, inventory toggle button,
+  stack counts, selected slot highlight, and camera direction line. Mouse clicks are handled
+  from SDL events in the C++ event loop.
+- cppfuncs.py: ctypes declarations for the HUD C API.
+- hud.py: sends player/inventory values to C++; it does not draw anything.
+- world.py: creates the 12-slot inventory and sends controller camera direction to the HUD.
+- texture.py: loads the real PNG assets from <project folder>/assets first, with color fallback
+  only if a particular image is absent. Texture IDs remain fixed: air=0, grass=1, stone=2,
+  water=3, sand=4, plank=5, oak=6, leaves=7, health=8, hungry=9, npc1=10.
+
+IMPORTANT:
+The Python files now call new C++ exports (HUDSetData, HUDDraw, HUDGetSelectedSlot,
+HUDGetInventoryOpen). You MUST rebuild cppmain.dll from this cmain.cpp and replace the old
+DLL. Merely copying the Python files while keeping the old DLL will cause an undefined
+symbol error. The C++ source was updated, but could not be compiled in this environment
+because SDL3 and SDL3_image development headers/import libraries are not available here.
+
+Texture fix explanation:
+The recent texture.py had replaced all PNG loading with LoadTexture(), which creates a
+1x1 solid-color texture. This is why every asset looked like a flat color. The new version
+restores IMG_LoadTexture via LoadImageTexture and uses absolute paths, while preserving
+fixed IDs and safe fallbacks.
+
+Validation:
+- Python syntax check passed for cppfuncs.py, texture.py, hud.py, world.py.
+- Actual Windows SDL3 runtime and C++ DLL rebuild were not tested here.

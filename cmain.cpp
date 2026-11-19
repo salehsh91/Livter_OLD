@@ -1,4 +1,3 @@
-
 #include <iostream>
 #include <string>
 #include <cstdint>
@@ -6,6 +5,9 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
+#include <array>
+#include <cctype>
+#include <cmath>
 #include <cstring>
 
 #include <SDL3/SDL.h>
@@ -33,6 +35,7 @@ struct EntityData {
 };
 
 EntityData* entities = nullptr;
+static int entity_count = 0;
 
 #define API extern "C" __declspec(dllexport)
 
@@ -47,8 +50,20 @@ static SDL_Renderer* RENderer = nullptr;
 
 static bool running = true;
 
-// Keys freshly pressed during the current frame
+// Keys currently held and keys newly pressed during the current frame.
+static std::unordered_set<SDL_Scancode> held_scancodes;
 static std::unordered_set<SDL_Scancode> pressed_this_frame;
+
+// HUD state is owned and rendered entirely by C++.
+static int hud_health = 100;
+static int hud_hunger = 0;
+static float hud_camera_angle = 0.0f;
+static int hud_slot_textures[64] = {};
+static int hud_slot_counts[64] = {};
+static int hud_slot_active[64] = {};
+static int hud_slot_count = 0;
+static bool hud_inventory_open = true;
+static int hud_selected_slot = 0;
 
 // --------------------------------------------------
 // Renderer / Window
@@ -118,6 +133,44 @@ static int INIT() {
 // Call render() once per frame.
 // --------------------------------------------------
 
+static void handle_hud_click(float mx, float my) {
+    if (!WINdow) return;
+    int width = 0, height = 0;
+    SDL_GetWindowSize(WINdow, &width, &height);
+
+    SDL_FRect button = {
+        static_cast<float>(width - 140), 10.0f, 130.0f, 45.0f
+    };
+    if (mx >= button.x && mx <= button.x + button.w &&
+        my >= button.y && my <= button.y + button.h) {
+        hud_inventory_open = !hud_inventory_open;
+        return;
+    }
+    if (!hud_inventory_open) return;
+
+    constexpr int slot_size = 50;
+    constexpr int gap = 10;
+    constexpr int columns = 6;
+    const int rows = (hud_slot_count + columns - 1) / columns;
+    const int grid_width = columns * (slot_size + gap);
+    const int x = width - grid_width - 20;
+    const int y = height - rows * (slot_size + gap) - 20;
+
+    for (int i = 0; i < hud_slot_count; ++i) {
+        const int col = i % columns;
+        const int row = i / columns;
+        const float sx = static_cast<float>(x + col * (slot_size + gap));
+        const float sy = static_cast<float>(y + row * (slot_size + gap));
+        if (mx >= sx && mx <= sx + slot_size &&
+            my >= sy && my <= sy + slot_size) {
+            hud_selected_slot = i + 1;
+            for (int j = 0; j < hud_slot_count; ++j)
+                hud_slot_active[j] = (j == i) ? 1 : 0;
+            return;
+        }
+    }
+}
+
 static int RenderInternal(SDL_Renderer* renderer) {
     SDL_Event ev;
 
@@ -129,8 +182,17 @@ static int RenderInternal(SDL_Renderer* renderer) {
             running = false;
         }
 
-        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat) {
-            pressed_this_frame.insert(ev.key.scancode);
+        if (ev.type == SDL_EVENT_KEY_DOWN) {
+            held_scancodes.insert(ev.key.scancode);
+            if (!ev.key.repeat)
+                pressed_this_frame.insert(ev.key.scancode);
+        }
+        else if (ev.type == SDL_EVENT_KEY_UP) {
+            held_scancodes.erase(ev.key.scancode);
+        }
+        else if (ev.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+            // Prevent stuck keys if the window loses focus while a key is down.
+            held_scancodes.clear();
         }
     }
 
@@ -294,6 +356,111 @@ static bool DrawObj(
     }
 
     return true;
+}
+
+// --------------------------------------------------
+// HUD drawing (SDL3 only)
+// --------------------------------------------------
+static void hud_fill(SDL_Renderer* renderer, float x, float y,
+                     float w, float h, Uint8 r, Uint8 g, Uint8 b, Uint8 a=255) {
+    if (!renderer || w <= 0 || h <= 0) return;
+    SDL_SetRenderDrawColor(renderer, r, g, b, a);
+    SDL_FRect rect = {x, y, w, h};
+    SDL_RenderFillRect(renderer, &rect);
+}
+
+static void hud_text(SDL_Renderer* renderer, const std::string& value,
+                     float x, float y, int scale=2) {
+    // Compact 3x5 bitmap font for the Inventory label and stack counts.
+    static const std::unordered_map<char, std::array<const char*, 5>> glyphs = {
+        {'I', {"111", "010", "010", "010", "111"}},
+        {'N', {"101", "111", "111", "111", "101"}},
+        {'V', {"101", "101", "101", "101", "010"}},
+        {'E', {"111", "100", "110", "100", "111"}},
+        {'T', {"111", "010", "010", "010", "010"}},
+        {'O', {"111", "101", "101", "101", "111"}},
+        {'R', {"110", "101", "110", "101", "101"}},
+        {'Y', {"101", "101", "010", "010", "010"}},
+        {'0', {"111", "101", "101", "101", "111"}},
+        {'1', {"010", "110", "010", "010", "111"}},
+        {'2', {"111", "001", "111", "100", "111"}},
+        {'3', {"111", "001", "111", "001", "111"}},
+        {'4', {"101", "101", "111", "001", "001"}},
+        {'5', {"111", "100", "111", "001", "111"}},
+        {'6', {"111", "100", "111", "101", "111"}},
+        {'7', {"111", "001", "010", "010", "010"}},
+        {'8', {"111", "101", "111", "101", "111"}},
+        {'9', {"111", "101", "111", "001", "111"}}
+    };
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+    float cursor = x;
+    for (char ch : value) {
+        auto it = glyphs.find(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
+        if (it == glyphs.end()) { cursor += 4 * scale; continue; }
+        for (int row = 0; row < 5; ++row)
+            for (int col = 0; col < 3; ++col)
+                if (it->second[row][col] == '1') {
+                    SDL_FRect pixel = {cursor + col * scale, y + row * scale,
+                                       static_cast<float>(scale), static_cast<float>(scale)};
+                    SDL_RenderFillRect(renderer, &pixel);
+                }
+        cursor += 4 * scale;
+    }
+}
+
+static void DrawHUDInternal(SDL_Renderer* renderer, int width, int height,
+                            int direction_length) {
+    if (!renderer) return;
+
+    // Health and hunger icons: ten units, 12 px vertical spacing.
+    for (int i = 0; i < std::clamp(hud_health / 10, 0, 10); ++i) {
+        const float y = 10.0f + i * 12.0f;
+        DrawObj(renderer, 20, y, 10, 10, 8); // Texture.health
+    }
+    for (int i = 0; i < std::clamp(hud_hunger / 10, 0, 10); ++i) {
+        const float y = 10.0f + i * 12.0f;
+        DrawObj(renderer, 40, y, 10, 10, 9); // Texture.hungry
+    }
+
+    // Inventory toggle button.
+    const float bx = static_cast<float>(width - 140);
+    hud_fill(renderer, bx, 10, 130, 45, 70, 70, 70);
+    hud_fill(renderer, bx + 2, 12, 126, 41, 90, 90, 90);
+    hud_text(renderer, "Inventory", bx + 29, 26, 2);
+
+    // Inventory panel and six-column slots.
+    if (hud_inventory_open) {
+        constexpr int slot_size = 50, gap = 10, columns = 6;
+        const int rows = (hud_slot_count + columns - 1) / columns;
+        const int grid_width = columns * (slot_size + gap);
+        const int grid_height = rows * (slot_size + gap);
+        const float x = static_cast<float>(width - grid_width - 20);
+        const float y = static_cast<float>(height - grid_height - 20);
+        hud_fill(renderer, x, y, static_cast<float>(grid_width),
+                 static_cast<float>(grid_height), 50, 50, 50);
+
+        for (int i = 0; i < hud_slot_count; ++i) {
+            const int col = i % columns, row = i / columns;
+            const float sx = x + col * (slot_size + gap);
+            const float sy = y + row * (slot_size + gap);
+            if (hud_slot_active[i] || hud_selected_slot == i + 1)
+                hud_fill(renderer, sx, sy, slot_size, slot_size, 255, 255, 0);
+            hud_fill(renderer, sx + 2, sy + 2, 46, 46, 80, 80, 80);
+            if (hud_slot_textures[i] >= 0 && hud_slot_counts[i] > 0)
+                DrawObj(renderer, sx + 5, sy + 5, 40, 40, hud_slot_textures[i]);
+            if (hud_slot_counts[i] > 1)
+                hud_text(renderer, std::to_string(hud_slot_counts[i]), sx + 34, sy + 34, 2);
+        }
+    }
+
+    // Camera direction indicator, centered on the screen.
+    const float cx = width / 2.0f, cy = height / 2.0f;
+    const float radians = hud_camera_angle * 0.01745329251994329577f;
+    const float ex = cx + std::sin(radians) * direction_length;
+    const float ey = cy - std::cos(radians) * direction_length;
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+    SDL_RenderLine(renderer, cx, cy, ex, ey);
+    SDL_RenderLine(renderer, cx + 1, cy, ex + 1, ey);
 }
 
 // --------------------------------------------------
@@ -488,33 +655,21 @@ static void KeycontInternal(
 
     output[0] = '\0';
 
-    int keyboard_count = 0;
-
-    const bool* keyboard =
-        SDL_GetKeyboardState(&keyboard_count);
-
     std::string held;
     std::string pressed;
 
     // Held keys
-    if (keyboard && hold_scancodes && hold_count > 0) {
-
+    if (hold_scancodes && hold_count > 0) {
         for (int i = 0; i < hold_count; ++i) {
-
-            const int scancode = hold_scancodes[i];
-
-            if (scancode < 0 || scancode >= keyboard_count)
+            const int value = hold_scancodes[i];
+            if (value < 0 || value >= SDL_SCANCODE_COUNT)
                 continue;
 
-            if (!keyboard[scancode])
+            const SDL_Scancode key = static_cast<SDL_Scancode>(value);
+            if (held_scancodes.find(key) == held_scancodes.end())
                 continue;
 
-            append_text(
-                held,
-                SDL_GetScancodeName(
-                    static_cast<SDL_Scancode>(scancode)
-                )
-            );
+            append_text(held, SDL_GetScancodeName(key));
         }
     }
 
@@ -602,6 +757,7 @@ static int quit_internal() {
 
     delete[] entities;
     entities = nullptr;
+    entity_count = 0;
 
     SDL_Quit();
 
@@ -659,6 +815,31 @@ API bool drawobj(
 ) {
     return DrawObj(renderer, x, y, w, h, texture_name);
 }
+
+API void HUDSetData(int health, int hunger, float camera_angle,
+                    const int* item_textures, const int* item_counts,
+                    const int* item_active, int slot_count) {
+    hud_health = std::clamp(health, 0, 100);
+    hud_hunger = std::clamp(hunger, 0, 100);
+    hud_camera_angle = camera_angle;
+    hud_slot_count = std::clamp(slot_count, 0, 64);
+    for (int i = 0; i < hud_slot_count; ++i) {
+        hud_slot_textures[i] = item_textures ? item_textures[i] : -1;
+        hud_slot_counts[i] = item_counts ? std::max(0, item_counts[i]) : 0;
+        hud_slot_active[i] = item_active ? item_active[i] : 0;
+    }
+    if (hud_selected_slot > hud_slot_count) hud_selected_slot = 0;
+}
+
+API void HUDDraw(int direction_length) {
+    if (!RENderer || !WINdow) return;
+    int width = 0, height = 0;
+    SDL_GetWindowSize(WINdow, &width, &height);
+    DrawHUDInternal(RENderer, width, height, direction_length);
+}
+
+API int HUDGetSelectedSlot() { return hud_selected_slot; }
+API int HUDGetInventoryOpen() { return hud_inventory_open ? 1 : 0; }
 
 API void pr(
     const int32_t* blocks,
@@ -734,6 +915,36 @@ API EntityData* CreateEntities(int count) {
     delete[] entities;
 
     entities = new EntityData[count]();
+    entity_count = count;
 
     return entities;
+}
+
+
+// --------------------------------------------------
+// Render Python-owned entity data
+// --------------------------------------------------
+
+API int RenderEntities() {
+    if (!RENderer || !entities)
+        return 0;
+
+    int drawn = 0;
+    for (int i = 0; i < entity_count; ++i) {
+        const EntityData& e = entities[i];
+        if (!e.active || e.texture < 0)
+            continue;
+
+        if (DrawObj(
+            RENderer,
+            e.world_x + e.bx,
+            e.world_y + e.by,
+            e.width,
+            e.height,
+            e.texture
+        )) {
+            ++drawn;
+        }
+    }
+    return drawn;
 }
