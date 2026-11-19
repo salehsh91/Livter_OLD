@@ -57,7 +57,8 @@ HUDSetData = loadFunction(
     "HUDSetData",
     args=[ctypes.c_int, ctypes.c_int, ctypes.c_float,
           ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
-          ctypes.POINTER(ctypes.c_int), ctypes.c_int],
+          ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+          ctypes.c_int],
 )
 HUDDraw = loadFunction("HUDDraw", args=[ctypes.c_int])
 HUDGetSelectedSlot = loadFunction("HUDGetSelectedSlot", result=ctypes.c_int)

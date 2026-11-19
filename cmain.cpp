@@ -61,6 +61,7 @@ static float hud_camera_angle = 0.0f;
 static int hud_slot_textures[64] = {};
 static int hud_slot_counts[64] = {};
 static int hud_slot_active[64] = {};
+static int hud_slot_present[64] = {};
 static int hud_slot_count = 0;
 static bool hud_inventory_open = true;
 static int hud_selected_slot = 0;
@@ -135,37 +136,49 @@ static int INIT() {
 
 static void handle_hud_click(float mx, float my) {
     if (!WINdow) return;
+
     int width = 0, height = 0;
     SDL_GetWindowSize(WINdow, &width, &height);
 
-    SDL_FRect button = {
+    // Same rectangle as pygame.Rect(WIDTH - 140, 10, 130, 45).
+    const SDL_FRect button = {
         static_cast<float>(width - 140), 10.0f, 130.0f, 45.0f
     };
-    if (mx >= button.x && mx <= button.x + button.w &&
-        my >= button.y && my <= button.y + button.h) {
+
+    if (mx >= button.x && mx < button.x + button.w &&
+        my >= button.y && my < button.y + button.h) {
         hud_inventory_open = !hud_inventory_open;
         return;
     }
+
     if (!hud_inventory_open) return;
 
     constexpr int slot_size = 50;
     constexpr int gap = 10;
     constexpr int columns = 6;
     const int rows = (hud_slot_count + columns - 1) / columns;
+    const int grid_height = rows * (slot_size + gap);
     const int grid_width = columns * (slot_size + gap);
+
+    // Exact Python expression:
+    // y = HEIGHT - int(h / columns) * gap - gap
     const int x = width - grid_width - 20;
-    const int y = height - rows * (slot_size + gap) - 20;
+    const int y = height - (grid_height / columns) * gap - gap;
 
     for (int i = 0; i < hud_slot_count; ++i) {
+        if (!hud_slot_present[i])
+            continue; // Python click_slot() ignores empty inventory IDs.
+
         const int col = i % columns;
         const int row = i / columns;
         const float sx = static_cast<float>(x + col * (slot_size + gap));
         const float sy = static_cast<float>(y + row * (slot_size + gap));
-        if (mx >= sx && mx <= sx + slot_size &&
-            my >= sy && my <= sy + slot_size) {
+
+        if (mx >= sx && mx < sx + slot_size &&
+            my >= sy && my < sy + slot_size) {
             hud_selected_slot = i + 1;
             for (int j = 0; j < hud_slot_count; ++j)
-                hud_slot_active[j] = (j == i) ? 1 : 0;
+                hud_slot_active[j] = (j == i && hud_slot_present[j]) ? 1 : 0;
             return;
         }
     }
@@ -182,7 +195,11 @@ static int RenderInternal(SDL_Renderer* renderer) {
             running = false;
         }
 
-        if (ev.type == SDL_EVENT_KEY_DOWN) {
+        if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+            if (ev.button.button == SDL_BUTTON_LEFT)
+                handle_hud_click(ev.button.x, ev.button.y);
+        }
+        else if (ev.type == SDL_EVENT_KEY_DOWN) {
             held_scancodes.insert(ev.key.scancode);
             if (!ev.key.repeat)
                 pressed_this_frame.insert(ev.key.scancode);
@@ -412,55 +429,91 @@ static void DrawHUDInternal(SDL_Renderer* renderer, int width, int height,
                             int direction_length) {
     if (!renderer) return;
 
-    // Health and hunger icons: ten units, 12 px vertical spacing.
-    for (int i = 0; i < std::clamp(hud_health / 10, 0, 10); ++i) {
-        const float y = 10.0f + i * 12.0f;
-        DrawObj(renderer, 20, y, 10, 10, 8); // Texture.health
+    // Match Python: range(max(0, health // 10)); no artificial 10-icon cap.
+    const int health_icons = std::max(0, static_cast<int>(std::floor(hud_health / 10.0f)));
+    const int hunger_icons = std::max(0, static_cast<int>(std::floor(hud_hunger / 10.0f)));
+
+    for (int i = 0; i < health_icons; ++i) {
+        const float y = 10.0f + static_cast<float>(i) * 12.0f;
+        DrawObj(renderer, 20.0f, y, 10.0f, 10.0f, 8);
     }
-    for (int i = 0; i < std::clamp(hud_hunger / 10, 0, 10); ++i) {
-        const float y = 10.0f + i * 12.0f;
-        DrawObj(renderer, 40, y, 10, 10, 9); // Texture.hungry
+    for (int i = 0; i < hunger_icons; ++i) {
+        const float y = 10.0f + static_cast<float>(i) * 12.0f;
+        DrawObj(renderer, 40.0f, y, 10.0f, 10.0f, 9);
     }
 
-    // Inventory toggle button.
-    const float bx = static_cast<float>(width - 140);
-    hud_fill(renderer, bx, 10, 130, 45, 70, 70, 70);
-    hud_fill(renderer, bx + 2, 12, 126, 41, 90, 90, 90);
-    hud_text(renderer, "Inventory", bx + 29, 26, 2);
-
-    // Inventory panel and six-column slots.
     if (hud_inventory_open) {
-        constexpr int slot_size = 50, gap = 10, columns = 6;
+        constexpr int slot_size = 50;
+        constexpr int gap = 10;
+        constexpr int columns = 6;
         const int rows = (hud_slot_count + columns - 1) / columns;
         const int grid_width = columns * (slot_size + gap);
         const int grid_height = rows * (slot_size + gap);
         const float x = static_cast<float>(width - grid_width - 20);
-        const float y = static_cast<float>(height - grid_height - 20);
+        // Exact Python expression: HEIGHT - int(h / columns) * gap - gap.
+        const float y = static_cast<float>(height - (grid_height / columns) * gap - gap);
+
         hud_fill(renderer, x, y, static_cast<float>(grid_width),
                  static_cast<float>(grid_height), 50, 50, 50);
 
+        // Python iterates inventory.items(), so empty IDs have no slot drawn.
         for (int i = 0; i < hud_slot_count; ++i) {
-            const int col = i % columns, row = i / columns;
-            const float sx = x + col * (slot_size + gap);
-            const float sy = y + row * (slot_size + gap);
+            if (!hud_slot_present[i])
+                continue;
+
+            const int col = i % columns;
+            const int row = i / columns;
+            const float sx = x + static_cast<float>(col * (slot_size + gap));
+            const float sy = y + static_cast<float>(row * (slot_size + gap));
+
             if (hud_slot_active[i] || hud_selected_slot == i + 1)
-                hud_fill(renderer, sx, sy, slot_size, slot_size, 255, 255, 0);
-            hud_fill(renderer, sx + 2, sy + 2, 46, 46, 80, 80, 80);
-            if (hud_slot_textures[i] >= 0 && hud_slot_counts[i] > 0)
-                DrawObj(renderer, sx + 5, sy + 5, 40, 40, hud_slot_textures[i]);
-            if (hud_slot_counts[i] > 1)
-                hud_text(renderer, std::to_string(hud_slot_counts[i]), sx + 34, sy + 34, 2);
+                hud_fill(renderer, sx, sy, 50.0f, 50.0f, 255, 255, 0);
+
+            hud_fill(renderer, sx + 2.0f, sy + 2.0f, 46.0f, 46.0f, 80, 80, 80);
+
+            if (hud_slot_textures[i] >= 0) {
+                DrawObj(renderer, sx + 5.0f, sy + 5.0f,
+                        40.0f, 40.0f, hud_slot_textures[i]);
+            }
+
+            if (hud_slot_counts[i] > 1) {
+                // Same top-left position used by pygame: (slot_x + 35, slot_y + 32).
+                hud_text(renderer, std::to_string(hud_slot_counts[i]),
+                         sx + 35.0f, sy + 32.0f, 2);
+            }
         }
     }
 
-    // Camera direction indicator, centered on the screen.
-    const float cx = width / 2.0f, cy = height / 2.0f;
+    // Draw the toggle button after the inventory, matching HUD.draw() order.
+    // Exact Python rectangle and color: (70, 70, 70).
+    const float button_x = static_cast<float>(width - 140);
+    hud_fill(renderer, button_x, 10.0f, 130.0f, 45.0f, 70, 70, 70);
+    hud_text(renderer, "Inventory", button_x + 29.0f, 26.0f, 2);
+
+    // Same angle convention, center, length and white 2px direction line.
+    const float cx = width / 2.0f;
+    const float cy = height / 2.0f;
     const float radians = hud_camera_angle * 0.01745329251994329577f;
     const float ex = cx + std::sin(radians) * direction_length;
     const float ey = cy - std::cos(radians) * direction_length;
-    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-    SDL_RenderLine(renderer, cx, cy, ex, ey);
-    SDL_RenderLine(renderer, cx + 1, cy, ex + 1, ey);
+
+    // Build a 2px-wide quad, matching pygame.draw.line(..., width=2).
+    float dx = ex - cx;
+    float dy = ey - cy;
+    const float length = std::sqrt(dx * dx + dy * dy);
+    if (length > 0.0f) {
+        const float px = -dy / length;
+        const float py = dx / length;
+        const SDL_FColor white = {1.0f, 1.0f, 1.0f, 1.0f};
+        SDL_Vertex vertices[4] = {
+            {{cx + px, cy + py}, white, {0.0f, 0.0f}},
+            {{ex + px, ey + py}, white, {0.0f, 0.0f}},
+            {{ex - px, ey - py}, white, {0.0f, 0.0f}},
+            {{cx - px, cy - py}, white, {0.0f, 0.0f}}
+        };
+        const int indices[6] = {0, 1, 2, 0, 2, 3};
+        SDL_RenderGeometry(renderer, nullptr, vertices, 4, indices, 6);
+    }
 }
 
 // --------------------------------------------------
@@ -818,17 +871,25 @@ API bool drawobj(
 
 API void HUDSetData(int health, int hunger, float camera_angle,
                     const int* item_textures, const int* item_counts,
-                    const int* item_active, int slot_count) {
-    hud_health = std::clamp(health, 0, 100);
-    hud_hunger = std::clamp(hunger, 0, 100);
+                    const int* item_active, const int* item_present,
+                    int slot_count) {
+    hud_health = std::max(0, health);
+    hud_hunger = std::max(0, hunger);
     hud_camera_angle = camera_angle;
     hud_slot_count = std::clamp(slot_count, 0, 64);
-    for (int i = 0; i < hud_slot_count; ++i) {
-        hud_slot_textures[i] = item_textures ? item_textures[i] : -1;
-        hud_slot_counts[i] = item_counts ? std::max(0, item_counts[i]) : 0;
-        hud_slot_active[i] = item_active ? item_active[i] : 0;
+
+    for (int i = 0; i < 64; ++i) {
+        const bool in_range = i < hud_slot_count;
+        hud_slot_textures[i] = (in_range && item_textures) ? item_textures[i] : -1;
+        hud_slot_counts[i] = (in_range && item_counts) ? std::max(0, item_counts[i]) : 0;
+        hud_slot_active[i] = (in_range && item_active) ? item_active[i] : 0;
+        hud_slot_present[i] = (in_range && item_present) ? item_present[i] : 0;
     }
-    if (hud_selected_slot > hud_slot_count) hud_selected_slot = 0;
+
+    if (hud_selected_slot > hud_slot_count ||
+        (hud_selected_slot > 0 && !hud_slot_present[hud_selected_slot - 1])) {
+        hud_selected_slot = 0;
+    }
 }
 
 API void HUDDraw(int direction_length) {

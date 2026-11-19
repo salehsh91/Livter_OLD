@@ -22,7 +22,7 @@ class NPC:
         self.display = display
         self.world = world
         self.health = 100
-        self.hungry = 0
+        self.hungry = 100
         self.world_x = float(x)
         self.world_y = float(y)
         self.world_z = 0

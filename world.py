@@ -20,6 +20,7 @@ class World:
         self.camera = Camera(self.blockManager)
         self.inventory = Invertory()
         self.hud = HUD(self.inventory)
+        self.inventory.add("plank",20)
 
     def update(self):
         # render() polls SDL events and clears the frame. Input must be read
@@ -85,6 +86,9 @@ class World:
             center=player, move=player, texture=color,
         )
         npc_id = npc.id
+        
+
+        
         self.npcs[npc_id] = (npc, contoroler)
         if player:
             self.player = npc

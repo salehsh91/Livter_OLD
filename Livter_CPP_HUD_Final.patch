@@ -1,0 +1,560 @@
+--- a/cmain.cpp
++++ b/cmain.cpp
+@@ -5,6 +5,9 @@
+ #include <unordered_map>
+ #include <unordered_set>
+ #include <algorithm>
++#include <array>
++#include <cctype>
++#include <cmath>
+ #include <cstring>
+ 
+ #include <SDL3/SDL.h>
+@@ -50,6 +53,18 @@
+ // Keys currently held and keys newly pressed during the current frame.
+ static std::unordered_set<SDL_Scancode> held_scancodes;
+ static std::unordered_set<SDL_Scancode> pressed_this_frame;
++
++// HUD state is owned and rendered entirely by C++.
++static int hud_health = 100;
++static int hud_hunger = 0;
++static float hud_camera_angle = 0.0f;
++static int hud_slot_textures[64] = {};
++static int hud_slot_counts[64] = {};
++static int hud_slot_active[64] = {};
++static int hud_slot_present[64] = {};
++static int hud_slot_count = 0;
++static bool hud_inventory_open = true;
++static int hud_selected_slot = 0;
+ 
+ // --------------------------------------------------
+ // Renderer / Window
+@@ -119,6 +134,56 @@
+ // Call render() once per frame.
+ // --------------------------------------------------
+ 
++static void handle_hud_click(float mx, float my) {
++    if (!WINdow) return;
++
++    int width = 0, height = 0;
++    SDL_GetWindowSize(WINdow, &width, &height);
++
++    // Same rectangle as pygame.Rect(WIDTH - 140, 10, 130, 45).
++    const SDL_FRect button = {
++        static_cast<float>(width - 140), 10.0f, 130.0f, 45.0f
++    };
++
++    if (mx >= button.x && mx < button.x + button.w &&
++        my >= button.y && my < button.y + button.h) {
++        hud_inventory_open = !hud_inventory_open;
++        return;
++    }
++
++    if (!hud_inventory_open) return;
++
++    constexpr int slot_size = 50;
++    constexpr int gap = 10;
++    constexpr int columns = 6;
++    const int rows = (hud_slot_count + columns - 1) / columns;
++    const int grid_height = rows * (slot_size + gap);
++    const int grid_width = columns * (slot_size + gap);
++
++    // Exact Python expression:
++    // y = HEIGHT - int(h / columns) * gap - gap
++    const int x = width - grid_width - 20;
++    const int y = height - (grid_height / columns) * gap - gap;
++
++    for (int i = 0; i < hud_slot_count; ++i) {
++        if (!hud_slot_present[i])
++            continue; // Python click_slot() ignores empty inventory IDs.
++
++        const int col = i % columns;
++        const int row = i / columns;
++        const float sx = static_cast<float>(x + col * (slot_size + gap));
++        const float sy = static_cast<float>(y + row * (slot_size + gap));
++
++        if (mx >= sx && mx < sx + slot_size &&
++            my >= sy && my < sy + slot_size) {
++            hud_selected_slot = i + 1;
++            for (int j = 0; j < hud_slot_count; ++j)
++                hud_slot_active[j] = (j == i && hud_slot_present[j]) ? 1 : 0;
++            return;
++        }
++    }
++}
++
+ static int RenderInternal(SDL_Renderer* renderer) {
+     SDL_Event ev;
+ 
+@@ -130,7 +195,11 @@
+             running = false;
+         }
+ 
+-        if (ev.type == SDL_EVENT_KEY_DOWN) {
++        if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
++            if (ev.button.button == SDL_BUTTON_LEFT)
++                handle_hud_click(ev.button.x, ev.button.y);
++        }
++        else if (ev.type == SDL_EVENT_KEY_DOWN) {
+             held_scancodes.insert(ev.key.scancode);
+             if (!ev.key.repeat)
+                 pressed_this_frame.insert(ev.key.scancode);
+@@ -304,6 +373,147 @@
+     }
+ 
+     return true;
++}
++
++// --------------------------------------------------
++// HUD drawing (SDL3 only)
++// --------------------------------------------------
++static void hud_fill(SDL_Renderer* renderer, float x, float y,
++                     float w, float h, Uint8 r, Uint8 g, Uint8 b, Uint8 a=255) {
++    if (!renderer || w <= 0 || h <= 0) return;
++    SDL_SetRenderDrawColor(renderer, r, g, b, a);
++    SDL_FRect rect = {x, y, w, h};
++    SDL_RenderFillRect(renderer, &rect);
++}
++
++static void hud_text(SDL_Renderer* renderer, const std::string& value,
++                     float x, float y, int scale=2) {
++    // Compact 3x5 bitmap font for the Inventory label and stack counts.
++    static const std::unordered_map<char, std::array<const char*, 5>> glyphs = {
++        {'I', {"111", "010", "010", "010", "111"}},
++        {'N', {"101", "111", "111", "111", "101"}},
++        {'V', {"101", "101", "101", "101", "010"}},
++        {'E', {"111", "100", "110", "100", "111"}},
++        {'T', {"111", "010", "010", "010", "010"}},
++        {'O', {"111", "101", "101", "101", "111"}},
++        {'R', {"110", "101", "110", "101", "101"}},
++        {'Y', {"101", "101", "010", "010", "010"}},
++        {'0', {"111", "101", "101", "101", "111"}},
++        {'1', {"010", "110", "010", "010", "111"}},
++        {'2', {"111", "001", "111", "100", "111"}},
++        {'3', {"111", "001", "111", "001", "111"}},
++        {'4', {"101", "101", "111", "001", "001"}},
++        {'5', {"111", "100", "111", "001", "111"}},
++        {'6', {"111", "100", "111", "101", "111"}},
++        {'7', {"111", "001", "010", "010", "010"}},
++        {'8', {"111", "101", "111", "101", "111"}},
++        {'9', {"111", "101", "111", "001", "111"}}
++    };
++    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
++    float cursor = x;
++    for (char ch : value) {
++        auto it = glyphs.find(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
++        if (it == glyphs.end()) { cursor += 4 * scale; continue; }
++        for (int row = 0; row < 5; ++row)
++            for (int col = 0; col < 3; ++col)
++                if (it->second[row][col] == '1') {
++                    SDL_FRect pixel = {cursor + col * scale, y + row * scale,
++                                       static_cast<float>(scale), static_cast<float>(scale)};
++                    SDL_RenderFillRect(renderer, &pixel);
++                }
++        cursor += 4 * scale;
++    }
++}
++
++static void DrawHUDInternal(SDL_Renderer* renderer, int width, int height,
++                            int direction_length) {
++    if (!renderer) return;
++
++    // Match Python: range(max(0, health // 10)); no artificial 10-icon cap.
++    const int health_icons = std::max(0, static_cast<int>(std::floor(hud_health / 10.0f)));
++    const int hunger_icons = std::max(0, static_cast<int>(std::floor(hud_hunger / 10.0f)));
++
++    for (int i = 0; i < health_icons; ++i) {
++        const float y = 10.0f + static_cast<float>(i) * 12.0f;
++        DrawObj(renderer, 20.0f, y, 10.0f, 10.0f, 8);
++    }
++    for (int i = 0; i < hunger_icons; ++i) {
++        const float y = 10.0f + static_cast<float>(i) * 12.0f;
++        DrawObj(renderer, 40.0f, y, 10.0f, 10.0f, 9);
++    }
++
++    if (hud_inventory_open) {
++        constexpr int slot_size = 50;
++        constexpr int gap = 10;
++        constexpr int columns = 6;
++        const int rows = (hud_slot_count + columns - 1) / columns;
++        const int grid_width = columns * (slot_size + gap);
++        const int grid_height = rows * (slot_size + gap);
++        const float x = static_cast<float>(width - grid_width - 20);
++        // Exact Python expression: HEIGHT - int(h / columns) * gap - gap.
++        const float y = static_cast<float>(height - (grid_height / columns) * gap - gap);
++
++        hud_fill(renderer, x, y, static_cast<float>(grid_width),
++                 static_cast<float>(grid_height), 50, 50, 50);
++
++        // Python iterates inventory.items(), so empty IDs have no slot drawn.
++        for (int i = 0; i < hud_slot_count; ++i) {
++            if (!hud_slot_present[i])
++                continue;
++
++            const int col = i % columns;
++            const int row = i / columns;
++            const float sx = x + static_cast<float>(col * (slot_size + gap));
++            const float sy = y + static_cast<float>(row * (slot_size + gap));
++
++            if (hud_slot_active[i] || hud_selected_slot == i + 1)
++                hud_fill(renderer, sx, sy, 50.0f, 50.0f, 255, 255, 0);
++
++            hud_fill(renderer, sx + 2.0f, sy + 2.0f, 46.0f, 46.0f, 80, 80, 80);
++
++            if (hud_slot_textures[i] >= 0) {
++                DrawObj(renderer, sx + 5.0f, sy + 5.0f,
++                        40.0f, 40.0f, hud_slot_textures[i]);
++            }
++
++            if (hud_slot_counts[i] > 1) {
++                // Same top-left position used by pygame: (slot_x + 35, slot_y + 32).
++                hud_text(renderer, std::to_string(hud_slot_counts[i]),
++                         sx + 35.0f, sy + 32.0f, 2);
++            }
++        }
++    }
++
++    // Draw the toggle button after the inventory, matching HUD.draw() order.
++    // Exact Python rectangle and color: (70, 70, 70).
++    const float button_x = static_cast<float>(width - 140);
++    hud_fill(renderer, button_x, 10.0f, 130.0f, 45.0f, 70, 70, 70);
++    hud_text(renderer, "Inventory", button_x + 29.0f, 26.0f, 2);
++
++    // Same angle convention, center, length and white 2px direction line.
++    const float cx = width / 2.0f;
++    const float cy = height / 2.0f;
++    const float radians = hud_camera_angle * 0.01745329251994329577f;
++    const float ex = cx + std::sin(radians) * direction_length;
++    const float ey = cy - std::cos(radians) * direction_length;
++
++    // Build a 2px-wide quad, matching pygame.draw.line(..., width=2).
++    float dx = ex - cx;
++    float dy = ey - cy;
++    const float length = std::sqrt(dx * dx + dy * dy);
++    if (length > 0.0f) {
++        const float px = -dy / length;
++        const float py = dx / length;
++        const SDL_FColor white = {1.0f, 1.0f, 1.0f, 1.0f};
++        SDL_Vertex vertices[4] = {
++            {{cx + px, cy + py}, white, {0.0f, 0.0f}},
++            {{ex + px, ey + py}, white, {0.0f, 0.0f}},
++            {{ex - px, ey - py}, white, {0.0f, 0.0f}},
++            {{cx - px, cy - py}, white, {0.0f, 0.0f}}
++        };
++        const int indices[6] = {0, 1, 2, 0, 2, 3};
++        SDL_RenderGeometry(renderer, nullptr, vertices, 4, indices, 6);
++    }
+ }
+ 
+ // --------------------------------------------------
+@@ -659,6 +869,39 @@
+     return DrawObj(renderer, x, y, w, h, texture_name);
+ }
+ 
++API void HUDSetData(int health, int hunger, float camera_angle,
++                    const int* item_textures, const int* item_counts,
++                    const int* item_active, const int* item_present,
++                    int slot_count) {
++    hud_health = std::max(0, health);
++    hud_hunger = std::max(0, hunger);
++    hud_camera_angle = camera_angle;
++    hud_slot_count = std::clamp(slot_count, 0, 64);
++
++    for (int i = 0; i < 64; ++i) {
++        const bool in_range = i < hud_slot_count;
++        hud_slot_textures[i] = (in_range && item_textures) ? item_textures[i] : -1;
++        hud_slot_counts[i] = (in_range && item_counts) ? std::max(0, item_counts[i]) : 0;
++        hud_slot_active[i] = (in_range && item_active) ? item_active[i] : 0;
++        hud_slot_present[i] = (in_range && item_present) ? item_present[i] : 0;
++    }
++
++    if (hud_selected_slot > hud_slot_count ||
++        (hud_selected_slot > 0 && !hud_slot_present[hud_selected_slot - 1])) {
++        hud_selected_slot = 0;
++    }
++}
++
++API void HUDDraw(int direction_length) {
++    if (!RENderer || !WINdow) return;
++    int width = 0, height = 0;
++    SDL_GetWindowSize(WINdow, &width, &height);
++    DrawHUDInternal(RENderer, width, height, direction_length);
++}
++
++API int HUDGetSelectedSlot() { return hud_selected_slot; }
++API int HUDGetInventoryOpen() { return hud_inventory_open ? 1 : 0; }
++
+ API void pr(
+     const int32_t* blocks,
+     const int32_t* chunk_coords,
+--- a/cppfuncs.py
++++ b/cppfuncs.py
+@@ -53,6 +53,17 @@
+     args=[ctypes.c_void_p, ctypes.c_char_p],
+     result=ctypes.c_int,
+ )
++HUDSetData = loadFunction(
++    "HUDSetData",
++    args=[ctypes.c_int, ctypes.c_int, ctypes.c_float,
++          ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
++          ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
++          ctypes.c_int],
++)
++HUDDraw = loadFunction("HUDDraw", args=[ctypes.c_int])
++HUDGetSelectedSlot = loadFunction("HUDGetSelectedSlot", result=ctypes.c_int)
++HUDGetInventoryOpen = loadFunction("HUDGetInventoryOpen", result=ctypes.c_int)
++
+ DrawObj = loadFunction(
+     "drawobj",
+     args=[ctypes.c_void_p, ctypes.c_float, ctypes.c_float,
+--- a/hud.py
++++ b/hud.py
+@@ -1,102 +1,76 @@
+-"""HUD رندرشده با SDL3/C++؛ بدون وابستگی به pygame یا فایل تصویر خارجی."""
++import ctypes
+ import conster
+-from cppfuncs import DrawObj, GetRenderer, LoadTexture
++from cppfuncs import HUDSetData, HUDDraw, HUDGetSelectedSlot, HUDGetInventoryOpen
+ 
+ 
+ class HUD:
+-    """نمایش نوار سلامتی و گرسنگی در مختصات ثابت صفحه."""
++    """Python-to-C++ data bridge. All HUD drawing and mouse input live in SDL3."""
+ 
+-    def __init__(self):
+-        self.renderer = GetRenderer()
+-        if not self.renderer:
+-            raise RuntimeError("HUD requires an initialized SDL renderer")
+-
+-        # LoadTexture یک تکسچر تک‌رنگ می‌سازد؛ این شناسه‌ها بعد از Texture.init هستند.
+-        self.panel = LoadTexture(self.renderer, 18, 22, 30, 225)
+-        self.track = LoadTexture(self.renderer, 65, 70, 78, 255)
+-        self.health_color = LoadTexture(self.renderer, 220, 45, 48, 255)
+-        self.hunger_color = LoadTexture(self.renderer, 225, 155, 35, 255)
+-        self.white = LoadTexture(self.renderer, 235, 240, 245, 255)
+-
+-        self._textures = (
+-            self.panel, self.track, self.health_color,
+-            self.hunger_color, self.white,
+-        )
+-        if any(texture < 0 for texture in self._textures):
+-            raise RuntimeError("Could not create HUD textures")
++    def __init__(self, inventory=None):
++        self.inventory = inventory
++        self.maxslots = int(getattr(inventory, "slotnum", 12))
++        self.linesizedir = int(getattr(conster, "camdirline", 50))
+ 
+     @staticmethod
+-    def _clamp(value, low=0.0, high=100.0):
++    def _item_texture(item):
++        if item is None:
++            return -1
++        if isinstance(item, dict):
++            value = item.get("texture", -1)
++        else:
++            value = getattr(item, "texture", -1)
+         try:
+-            value = float(value)
++            return int(value)
+         except (TypeError, ValueError):
+-            return low
+-        return max(low, min(high, value))
+-
+-    def _rect(self, texture, x, y, width, height):
+-        if width <= 0 or height <= 0:
+-            return
+-        DrawObj(
+-            self.renderer,
+-            float(x), float(y), float(width), float(height),
+-            int(texture),
+-        )
+-
+-    def _text(self, value, x, y, scale=2):
+-        """فونت پیکسلی کوچک؛ فقط ارقام و حروف موردنیاز HUD."""
+-        glyphs = {
+-            "0": ("111", "101", "101", "101", "111"),
+-            "1": ("010", "110", "010", "010", "111"),
+-            "2": ("111", "001", "111", "100", "111"),
+-            "3": ("111", "001", "111", "001", "111"),
+-            "4": ("101", "101", "111", "001", "001"),
+-            "5": ("111", "100", "111", "001", "111"),
+-            "6": ("111", "100", "111", "101", "111"),
+-            "7": ("111", "001", "010", "010", "010"),
+-            "8": ("111", "101", "111", "101", "111"),
+-            "9": ("111", "101", "111", "001", "111"),
+-            "H": ("101", "101", "111", "101", "101"),
+-            "P": ("110", "101", "110", "100", "100"),
+-            "F": ("111", "100", "110", "100", "100"),
+-            "O": ("111", "101", "101", "101", "111"),
+-            "D": ("110", "101", "101", "101", "110"),
+-        }
+-        cursor = x
+-        for char in str(value).upper():
+-            glyph = glyphs.get(char)
+-            if glyph is None:
+-                cursor += 4 * scale
+-                continue
+-            for row, line in enumerate(glyph):
+-                for col, pixel in enumerate(line):
+-                    if pixel == "1":
+-                        self._rect(
+-                            self.white,
+-                            cursor + col * scale,
+-                            y + row * scale,
+-                            scale,
+-                            scale,
+-                        )
+-            cursor += 4 * scale
++            return -1
+ 
+     def draw(self, player):
+         if player is None:
+             return
+ 
+         status = player.getStatus()
+-        health = self._clamp(status.get("health", 100))
+-        hungry = self._clamp(status.get("hungry", 0))
++        health = max(0, int(status.get("health", 0)))
++        hungry = max(0, int(status.get("hungry", 0)))
++        angle = float(getattr(player, "cameradir", 0.0))
+ 
+-        # Panel and tracks are drawn in screen-space, so camera movement
+-        # never moves the HUD with the world.
+-        x, y = 14, 14
+-        self._rect(self.panel, x, y, 224, 72)
++        slots = self.inventory.getinvertory() if self.inventory else {}
++        count = min(self.maxslots, 64)
+ 
+-        self._text("HP", x + 10, y + 10)
+-        self._rect(self.track, x + 48, y + 10, 164, 12)
+-        self._rect(self.health_color, x + 48, y + 10, 164 * health / 100, 12)
+-        self._text(int(round(health)), x + 48, y + 29)
++        textures = (ctypes.c_int * 64)(*([-1] * 64))
++        counts = (ctypes.c_int * 64)(*([0] * 64))
++        active = (ctypes.c_int * 64)(*([0] * 64))
++        present = (ctypes.c_int * 64)(*([0] * 64))
+ 
+-        self._text("FOOD", x + 10, y + 49)
+-        self._rect(self.track, x + 48, y + 48, 164, 12)
+-        self._rect(self.hunger_color, x + 48, y + 48, 164 * hungry / 100, 12)
++        for slot_id, data in slots.items():
++            index = int(slot_id) - 1
++            if index < 0 or index >= count:
++                continue
++
++            item = data[0]
++            amount = data[1]
++            textures[index] = self._item_texture(item)
++            counts[index] = max(0, int(amount))
++            active[index] = int(bool(data[2])) if len(data) > 2 else 0
++            present[index] = 1
++
++        # A click in C++ selects only an occupied slot. Mirror that selection
++        # back into the Python inventory exactly like the old click_slot().
++        selected = int(HUDGetSelectedSlot())
++        if selected and self.inventory:
++            for key, data in list(slots.items()):
++                self.inventory.slots[key] = (
++                    data[0], data[1], int(key) == selected
++                )
++            # Refresh active flags after writing the selected slot.
++            for slot_id, data in self.inventory.slots.items():
++                active[int(slot_id) - 1] = int(bool(data[2]))
++
++        HUDSetData(
++            health, hungry, angle,
++            textures, counts, active, present, count
++        )
++        HUDDraw(self.linesizedir)
++
++    @property
++    def inventory_open(self):
++        return bool(HUDGetInventoryOpen())
+--- a/texture.py
++++ b/texture.py
+@@ -1,7 +1,9 @@
+-from cppfuncs import GetRenderer, LoadTexture
++import os
++from cppfuncs import GetRenderer, LoadTexture, LoadImageTexture
++
+ 
+ class Texture:
+-    # IDs are deliberately fixed to match BLOCK_IDS in blockitem.py
++    # These IDs stay aligned with the C++ block texture IDs.
+     air = 0
+     grass = 1
+     stone = 2
+@@ -19,30 +21,52 @@
+     def init(cls):
+         if cls._initialized:
+             return
++
+         renderer = GetRenderer()
+         if not renderer:
+             raise RuntimeError("SDL renderer is not initialized")
+ 
+-        # Reserve texture ID 0 for air (transparent).
+-        ids = [
+-            LoadTexture(renderer, 0, 0, 0, 0),
+-            LoadTexture(renderer, 60, 160, 60, 255),
+-            LoadTexture(renderer, 120, 120, 120, 255),
+-            LoadTexture(renderer, 50, 90, 200, 255),
+-            LoadTexture(renderer, 220, 200, 120, 255),
+-            LoadTexture(renderer, 150, 100, 50, 255),
+-            LoadTexture(renderer, 105, 75, 35, 255),
+-            LoadTexture(renderer, 45, 135, 45, 210),
+-            LoadTexture(renderer, 220, 40, 40, 255),
+-            LoadTexture(renderer, 220, 150, 30, 255),
+-            LoadTexture(renderer, 255, 0, 0, 255),
++        base_dir = os.path.dirname(os.path.abspath(__file__))
++        assets_dir = os.path.join(base_dir, "assets")
++
++        # PNGs must be loaded as real images. Do not silently replace a missing
++        # or unreadable image with a solid-color texture: that caused the
++        # previous 'single color instead of texture' failure to go unnoticed.
++        image_files = [
++            ("grass", "grass.png"),
++            ("stone", "stone.png"),
++            ("water", "water.png"),
++            ("sand", "sand.png"),
++            ("plank", "plank.png"),
++            ("oak", "oak.png"),
++            ("leaves", "leaves.png"),
++            ("health", "health.png"),
++            ("hungry", "hungry.png"),
+         ]
+-        expected = list(range(len(ids)))
+-        if ids != expected:
+-            raise RuntimeError(
+-                f"SDL texture IDs are not sequential: expected {expected}, got {ids}"
+-            )
+-        (cls.air, cls.grass, cls.stone, cls.water, cls.sand,
+-         cls.plank, cls.oak, cls.leaves, cls.health,
+-         cls.hungry, cls.npc1) = ids
++
++        # ID 0: transparent air texture; ID 10: solid NPC placeholder.
++        air_id = LoadTexture(renderer, 0, 0, 0, 0)
++        if air_id != 0:
++            raise RuntimeError(f"Expected air texture ID 0, got {air_id}")
++        cls.air = air_id
++
++        for expected_id, (name, filename) in enumerate(image_files, start=1):
++            path = os.path.join(assets_dir, filename)
++            if not os.path.isfile(path):
++                raise FileNotFoundError(
++                    f"Missing texture file: {path}. Put the original PNG in the assets folder."
++                )
++
++            texture_id = LoadImageTexture(renderer, os.fsencode(path))
++            if texture_id != expected_id:
++                raise RuntimeError(
++                    f"Could not load {path} as texture ID {expected_id}; "
++                    f"C++ returned {texture_id}. Check SDL3_image and the PNG file."
++                )
++            setattr(cls, name, texture_id)
++
++        npc_id = LoadTexture(renderer, 255, 0, 0, 255)
++        if npc_id != 10:
++            raise RuntimeError(f"Expected NPC texture ID 10, got {npc_id}")
++        cls.npc1 = npc_id
+         cls._initialized = True
