@@ -1,527 +1,145 @@
 
-import ctypes
-import math
-import time
+import pygame as pyg
 
 from conster import *
-from blockitem import *
 from object import obj
-from structures import *
 
 
 class NPC:
 
-    # Pointer to the C++-owned shared entity array.
-    npcs = None
+    npcs = []
 
-    # Python-side gameplay instances.
-    instances = []
-    npc_count = 0
-    MaxEn = 0
-
-    @classmethod
-    def activate(cls, pointer, EntityPointer, MaxEn):
-        """Connect NPC rendering data to the C++-owned shared array."""
-        cls.npcs = ctypes.cast(pointer, EntityPointer)
-        cls.instances = []
-        cls.npc_count = 0
-        cls.MaxEn = MaxEn
-
-    def __init__(
-        self,
-        w,
-        h,
-        x,
-        y,
-        display,
-        world,
-        texture=Texture.npc1,
-        center=False,
-        move=False
-    ):
-
-        if NPC.npcs is None:
-            raise RuntimeError(
-                "NPC.activate(pointer) must be called first"
-            )
-
-        self.slot = self._find_free_slot()
-
-        if self.slot < 0:
-            raise RuntimeError("MAX_ENTITIES reached")
-
-        self.id = self.slot + 1
-        NPC.npc_count += 1
-
-        self.texture = texture
-
+    def __init__(self, w, h, x, y, display, world, color=COLORS["RED"],
+                 center=False, move=False):
+        self.id = len(self.npcs) + 1
+        self.color = color
         self.width = w
         self.height = h
-        self.length = 2
-
         self.display = display
-
         self.realx = x
         self.realy = y
-
-        self.space = 1
-
-        self.world = world
-
+        self.world = world              # BlocksWorld
         self.health = 100
-        self.hungry = 100
-
+        self.hungry = 0
         self.world_x = x
         self.world_y = y
-        self.world_z = 1
-
         self.last_dx = 0
         self.last_dy = 0
-
         self.move = move
+        self.direction = (0, 1)
+        self.npcs.append(self)
 
-        # True = Player
-        # False = NPC
-        self.center = center
-
-        # NPC vision range
-        self.vision_range = 10
-
-        self.dir_angle = 0
-        self.camdir_angle = 0
-
-        self.invertory = None
-
-        self.rightHand = None
-        self.Auto_Ground = True
-
-        self.bx = 0
-        self.by = 0
-
-        self.last_drap_time = 0
-        self.drap_delay = 500
-
-        self._update_render_data()
-        NPC.instances.append(self)
-
-    @classmethod
-    def _find_free_slot(cls):
-
-        for slot in range(cls.MaxEn):
-            if cls.npcs[slot].active == 0:
-                return slot
-
-        return -1
-
-    def _update_render_data(self):
-
-        data = NPC.npcs[self.slot]
-
-        data.kind = 1
-        data.active = 1
-        data.id = self.id
-
-        data.world_x = self.world_x
-        data.world_y = self.world_y
-        data.world_z = self.world_z
-
-        data.texture = int(self.texture)
-
-        data.width = self.width
-        data.height = self.height
-        data.length = self.length
-
-        data.bx = self.bx
-        data.by = self.by
-
-    @classmethod
-    def get_cpp_buffer(cls):
-        return cls.npcs
-
-    @classmethod
-    def get_cpp_pointer(cls):
-        return cls.npcs
-
-    @classmethod
-    def get_cpp_count(cls):
-        return cls.npc_count
-
-    @staticmethod
-    def _rects_collide(
-        ax, ay, aw, ah,
-        bx, by, bw, bh
-    ):
-        return (
-            ax < bx + bw
-            and ax + aw > bx
-            and ay < by + bh
-            and ay + ah > by
-        )
-
-    def addinvertory(self, invertory):
-        self.invertory = invertory
-
-    def update(self, bManager):
-
-        blocks = bManager.getblock(
-            self.world_x,
-            self.world_y,
-            self.width,
-            self.height
-        )
-
-        self.bx = bManager.bx
-        self.by = bManager.by
-
-        for key, block_type in blocks.items():
-
-            if block_type == "water" and self.world_z <= 1:
-
-                self.health -= Block.getblock_status(
-                    type=block_type
-                ).damage
-
-                break
-
-        self._update_render_data()
-
+    # ------------------------------------------------------------------
+    # API استاندارد (همان ورودی‌ای که بعداً مدل PyTorch هم می‌دهد)
+    # API = {"x": -1..1, "y": -1..1, "drap": bool}
+    # ------------------------------------------------------------------
     def getAPI(self, API):
+        if API is None:
+            self.last_dx = 0
+            self.last_dy = 0
+            return
 
-        self.Auto_Ground = API["Ground"]
+        x = API["x"] * NPC_SPEED
+        y = API["y"] * NPC_SPEED
 
-        if API["move"]:
-
-            rad = math.radians(API["dir"])
-
-            dx = math.sin(rad)
-            dy = -math.cos(rad)
-
-            self.dir_angle = API["dir"]
-
-        else:
-            dx = 0
-            dy = 0
-
-        x = dx * NPC_SPEED
-        y = dy * NPC_SPEED
-
-        old_x = self.world_x
-        old_y = self.world_y
+        # جهت فقط وقتی عوض می‌شود که حرکتی باشد (قبلاً با ایستادن (0,0) می‌شد)
+        if API["x"] != 0 or API["y"] != 0:
+            self.direction = (API["x"], API["y"])
 
         self.world_x += x
         self.world_y += y
-
         self.last_dx = x
         self.last_dy = y
 
-        self.camdir_angle = API["cameradir"]
+        if API["drap"]:
+            self.drap()
 
-        now = time.monotonic_ns() // 1_000_000
+    def drap(self):
+        x, y = self.directionManager()
+        ox, oy = self.world.base_x, self.world.base_y
+        z = obj.zblock(x, y, 0, 0, ox, oy, True)
+        item = obj(x, y, z, name="plank", offset_x=ox, offset_y=oy)
+        return item.create()
 
-        base_x = self.world.base_x
-        base_y = self.world.base_y
+    def update(self):
+        pass
 
-        hit_object = False
-        highest_z = 1
+    def directionManager(self):
+        # سلول زیر مرکز NPC، هم‌تراز با شبکه‌ی بلوک‌های جهان
+        ox, oy = self.world.base_x, self.world.base_y
+        cx = self.world_x + self.width / 2
+        cy = self.world_y + self.height / 2
+        x = ox + ((cx - ox) // BLOCK_SIZE) * BLOCK_SIZE
+        y = oy + ((cy - oy) // BLOCK_SIZE) * BLOCK_SIZE
 
-        for o in obj.getObj3x3x3(
-            self.world_x + self.width / 2,
-            self.world_y + self.height / 2,
-            self.world_z,
-            base_x,
-            base_y
-        ):
+        dx, dy = self.direction
+        if dx > 0:
+            x += BLOCK_SIZE
+        elif dx < 0:
+            x -= BLOCK_SIZE
+        if dy > 0:
+            y += BLOCK_SIZE
+        elif dy < 0:
+            y -= BLOCK_SIZE
+        return x, y
 
-            if self._rects_collide(
-                self.world_x + self.bx,
-                self.world_y + self.by,
-                self.width,
-                self.height,
+    def getStatus(self):
+        return {"health": self.health, "hungry": self.hungry,
+                "x": self.world_x, "y": self.world_y}
 
-                o[0] + self.bx,
-                o[1] + self.by,
-                o[2] - o[0],
-                o[3] - o[1]
-            ):
+    # ------------------------------------------------------------------
+    # دوربین
+    # ------------------------------------------------------------------
+    def is_visible(self, camera, margin=0):
+        return camera.is_visible(self.world_x, self.world_y,
+                                 self.width, self.height, margin)
 
-                hit_object = True
+    def to_render_data(self, camera):
+        """یک ردیف ساده برای ارسال به رندر C++ (مختصات صفحه)"""
+        sx, sy = camera.world_to_screen(self.world_x, self.world_y)
+        return (self.id, sx, sy, self.width, self.height, self.color)
 
-                object_top = o[4] + o[5]
+    @classmethod
+    def visible_npcs(cls, camera, margin=0):
+        return [n for n in cls.npcs if n.is_visible(camera, margin)]
 
-                if object_top > highest_z:
-                    highest_z = object_top
-
-        if hit_object:
-
-            if self.world_z + self.space >= highest_z:
-                self.world_z = highest_z
-
+    @classmethod
+    def drawNPC(cls, camera=None):
+        for npc in cls.npcs:
+            if camera is not None:
+                if not npc.is_visible(camera):
+                    continue
+                sx, sy = camera.world_to_screen(npc.world_x, npc.world_y)
             else:
-
-                self.world_x = old_x
-                self.world_y = old_y
-
-                self.last_dx = 0
-                self.last_dy = 0
-
-        else:
-            self.world_z = max(
-                1,
-                self.world_z - 1
-            )
-
-        if now - self.last_drap_time >= self.drap_delay:
-
-            self.last_drap_time = now
-
-            self.drap(API["drap"])
-
-            if API["debug"]:
-                print(self.world_x,":",self.world_y)
-                # Structers.Tree(
-                #     self.world,
-                #     self.world_x,
-                #     self.world_y
-                # )
-
-        self._update_render_data()
-
-    def drap(self, drap):
-
-        if self.invertory is None or drap == 0:
-            return
-
-        key = None
-
-        for k, data in self.invertory.slots.items():
-
-            if len(data) >= 3 and data[2] == True:
-                key = k
-                break
-
-        if key is None:
-            return
-
-        slot = self.invertory.slots[key]
-
-        self.rightHand = slot
-
-        if len(slot) < 3:
-            return
-
-        item = slot[0]
-        count = slot[1]
-        active = slot[2]
-
-        if count <= 0 or active == False:
-            return
-
-        x = WIDTH / 2
-        y = HEIGHT / 2
-
-        rad = math.radians(self.camdir_angle)
-
-        end_x = x + math.sin(rad) * camdirline
-        end_y = y - math.cos(rad) * camdirline
-
-        w = item.block.w
-        h = item.block.h
-
-        base_x = self.world.base_x
-        base_y = self.world.base_y
-
-        world_x = end_x - self.world.bx
-        world_y = end_y - self.world.by
-
-        z1 = obj.zblock(
-            world_x,
-            world_y,
-            self.world_z,
-            self.length,
-            base_x,
-            base_y,
-            self.Auto_Ground
-        )
-
-        world_z = z1
-
-        if drap >= 1:
-
-            new_obj = obj(
-                world_x,
-                world_y,
-                world_z,
-                w,
-                h,
-                name=item.name,
-                offset_x=base_x,
-                offset_y=base_y
-            )
-
-            if new_obj.create():
-
-                self.invertory.slots[key] = (
-                    item,
-                    count - 1,
-                    active
-                )
-
-        elif drap <= -1:
-
-            result = obj.remove(
-                world_x,
-                world_y,
-                world_z,
-                w,
-                h,
-                name=item.name,
-                offset_x=base_x,
-                offset_y=base_y,
-                autogrand=self.Auto_Ground
-            )
-
-            if result[0]:
-
-                a = False
-
-                i = Item.getitem_status(
-                    name=result[1]
-                )
-
-                if slot[0] == i:
-                    a = True
-
-                self.invertory.add(
-                    i,
-                    1,
-                    a
-                )
-
-    # ==================================================
-    # NPC Block Vision
-    # ==================================================
-
-    def getVisibleBlocks(self, bManager):
-
-        blocks = {}
-
-        # Player does not use NPC vision.
-        if self.center:
-            return blocks
-
-        for nx in range(
-            -self.vision_range,
-            self.vision_range + 1
-        ):
-
-            for ny in range(
-                -self.vision_range,
-                self.vision_range + 1
-            ):
-
-                x = self.world_x + nx * BLOCK_SIZE
-                y = self.world_y + ny * BLOCK_SIZE
-
-                blocks[(nx, ny)] = bManager.getblock(
-                    x,
-                    y,
-                    BLOCK_SIZE,
-                    BLOCK_SIZE
-                )
-
-        return blocks
-
-    # ==================================================
-    # NPC Object Vision
-    # ==================================================
-
-    def getVisibleObjects(self):
-
-        visible_objects = []
-
-        if self.center:
-            return visible_objects
-
-        vision_size = self.vision_range * BLOCK_SIZE
-
-        min_x = self.world_x - vision_size
-        max_x = self.world_x + vision_size
-
-        min_y = self.world_y - vision_size
-        max_y = self.world_y + vision_size
-
-        for object_ in obj.objs.values():
-
-            if (
-                min_x <= object_.world_x <= max_x
-                and
-                min_y <= object_.world_y <= max_y
-            ):
-                visible_objects.append(object_)
-
-        return visible_objects
-
-    # ==================================================
-    # NPC Vision of Other NPCs
-    # ==================================================
-
-    def getVisibleNPCs(self):
-
-        visible_npcs = []
-
-        if self.center:
-            return visible_npcs
-
-        vision_size = self.vision_range * BLOCK_SIZE
-
-        min_x = self.world_x - vision_size
-        max_x = self.world_x + vision_size
-
-        min_y = self.world_y - vision_size
-        max_y = self.world_y + vision_size
-
-        for npc in NPC.instances:
-
-            if npc is self:
-                continue
-
-            if (
-                min_x <= npc.world_x <= max_x
-                and
-                min_y <= npc.world_y <= max_y
-            ):
-                visible_npcs.append(npc)
-
-        return visible_npcs
-
-    def getStatus(self, bManager):
-
-        blocks = {}
-        id = 0
-
-        for nx in range(-10, 10):
-
-            for ny in range(-10, 10):
-
-                x = nx * BLOCK_SIZE + self.world_x
-                y = ny * BLOCK_SIZE + self.world_y
-
-                id += 1
-
-                blocks[id] = bManager.getblock(
-                    x,
-                    y,
-                    BLOCK_SIZE,
-                    BLOCK_SIZE
-                )
-
-        return {
-            "blocks": blocks,
-            "invertory": self.invertory.slots,
-            "numslots": self.invertory.slotnum,
-            "health": self.health,
-            "hungry": self.hungry,
-            "x": self.world_x,
-            "y": self.world_y,
-            "cameradir": self.camdir_angle
-        }
+                sx = npc.world_x + npc.world.bx
+                sy = npc.world_y + npc.world.by
+            pyg.draw.rect(npc.display, npc.color,
+                          (sx, sy, npc.width, npc.height))
+
+
+class NPC_Contoroler:
+
+    def __init__(self, up=pyg.K_w, down=pyg.K_s, left=pyg.K_a, right=pyg.K_d,
+                 drap=pyg.K_e, s=True):
+        self.key_up = up
+        self.key_down = down
+        self.key_left = left
+        self.key_right = right
+        self.key_drap = drap
+        self.s = s
+
+    def getAPI(self, keys):
+        x = 0
+        y = 0
+        if keys[self.key_up]:
+            y -= 1
+        if keys[self.key_down]:
+            y += 1
+        if keys[self.key_left]:
+            x -= 1
+        if keys[self.key_right]:
+            x += 1
+        api = {"x": x, "y": y, "drap": bool(keys[self.key_drap])}
+        if self.s:
+            return api
+        return None
