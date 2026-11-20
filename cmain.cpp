@@ -66,6 +66,12 @@ static int hud_slot_count = 0;
 static bool hud_inventory_open = true;
 static int hud_selected_slot = 0;
 
+// FPS is measured from calls to present(), i.e. rendered game frames.
+static int hud_fps = 0;
+static Uint64 fps_last_counter = 0;
+static Uint64 fps_frame_count = 0;
+static Uint64 fps_frequency = 0;
+
 // --------------------------------------------------
 // Renderer / Window
 // --------------------------------------------------
@@ -124,6 +130,11 @@ static int INIT() {
     }
 
     running = true;
+
+    hud_fps = 0;
+    fps_last_counter = 0;
+    fps_frame_count = 0;
+    fps_frequency = SDL_GetPerformanceFrequency();
 
     SDL_Log("SDL initialized successfully.");
     return 0;
@@ -392,6 +403,10 @@ static void hud_text(SDL_Renderer* renderer, const std::string& value,
     static const std::unordered_map<char, std::array<const char*, 5>> glyphs = {
         {'I', {"111", "010", "010", "010", "111"}},
         {'N', {"101", "111", "111", "111", "101"}},
+        {'F', {"111", "100", "110", "100", "100"}},
+        {'P', {"110", "101", "110", "100", "100"}},
+        {'S', {"111", "100", "111", "001", "111"}},
+        {':', {"000", "010", "000", "010", "000"}},
         {'V', {"101", "101", "101", "101", "010"}},
         {'E', {"111", "100", "110", "100", "111"}},
         {'T', {"111", "010", "010", "010", "010"}},
@@ -441,6 +456,9 @@ static void DrawHUDInternal(SDL_Renderer* renderer, int width, int height,
         const float y = 10.0f + static_cast<float>(i) * 12.0f;
         DrawObj(renderer, 40.0f, y, 10.0f, 10.0f, 9);
     }
+
+    // FPS counter (updated in present_internal).
+    hud_text(renderer, "FPS:" + std::to_string(hud_fps), 70.0f, 10.0f, 2);
 
     if (hud_inventory_open) {
         constexpr int slot_size = 50;
@@ -777,12 +795,42 @@ static void KeycontInternal(
 // Present
 // --------------------------------------------------
 
+static void update_fps_counter() {
+    const Uint64 now = SDL_GetPerformanceCounter();
+
+    if (fps_frequency == 0)
+        fps_frequency = SDL_GetPerformanceFrequency();
+
+    if (fps_last_counter == 0) {
+        fps_last_counter = now;
+        fps_frame_count = 1;
+        return;
+    }
+
+    ++fps_frame_count;
+
+    const double elapsed =
+        static_cast<double>(now - fps_last_counter) /
+        static_cast<double>(fps_frequency);
+
+    // Refresh the displayed value twice per second.
+    if (elapsed >= 0.5) {
+        hud_fps = static_cast<int>(
+            std::lround(static_cast<double>(fps_frame_count) / elapsed)
+        );
+
+        fps_frame_count = 0;
+        fps_last_counter = now;
+    }
+}
+
 static void present_internal() {
     if (!RENderer)
         return;
 
+    update_fps_counter();
     SDL_RenderPresent(RENderer);
-    SDL_Delay(16);
+    // SDL_Delay(1);
 }
 
 // --------------------------------------------------

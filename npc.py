@@ -32,6 +32,7 @@ class NPC:
         self.center = center
         self.direction = (0, 1)
         self.texture = conster.DEFAULT_NPC_TEXTURE if texture is None else int(texture)
+        self.inventory = None
         self.npcs.append(self)
 
     def getAPI(self, api):
@@ -58,6 +59,7 @@ class NPC:
         x, y = self.directionManager()
         ox, oy = self.world.base_x, self.world.base_y
         z = obj.zblock(x, y, 0, 0, ox, oy, True)
+        
         return obj(x, y, z, name="plank", offset_x=ox, offset_y=oy).create()
 
     def undrap(self):

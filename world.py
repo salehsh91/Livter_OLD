@@ -18,9 +18,8 @@ class World:
         self.blockManager = BlocksWorld(self.seed)
         self.blockManager.create()
         self.camera = Camera(self.blockManager)
-        self.inventory = Invertory()
-        self.hud = HUD(self.inventory)
-        self.inventory.add("plank",20)
+        self.hud = None
+        
 
     def update(self):
         # render() polls SDL events and clears the frame. Input must be read
@@ -95,4 +94,9 @@ class World:
         return npc
 
     def newPlayer(self, w, h, x, y, color, contoroler=None):
-        return self.newNPC(w, h, x, y, color, contoroler, True)
+        inventory = Invertory()
+        player = self.newNPC(w, h, x, y, color, contoroler, True)
+        self.hud = HUD(inventory)
+        inventory.add("plank",20)
+        player.inventory = inventory
+        return 
